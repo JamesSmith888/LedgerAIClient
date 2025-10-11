@@ -1,6 +1,80 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# LedgerAI Client
+
+一个规范的 React Native 项目，包含完整的目录结构和可复用组件示例。
+
+## ✨ 特性
+
+- 📁 **标准化目录结构** - 符合 React Native 最佳实践
+- 🎨 **统一主题系统** - 颜色、字体、间距统一管理
+- 🧩 **可复用组件** - Button、Input、Card 等通用组件
+- 📱 **完整示例页面** - 包含表单、列表、卡片等常用功能
+- 📝 **TypeScript 支持** - 类型安全，更好的开发体验
+- 📚 **详细文档** - 适合新手学习
+
+---
+
+This is a [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
 
 # Getting Started
+
+## 📖 文档
+
+- **[快速入门指南](./GETTING_STARTED.md)** - 新手必读，包含组件使用示例
+- **[项目结构说明](./PROJECT_STRUCTURE.md)** - 详细的目录和组件说明
+
+## 📁 项目结构
+
+```
+src/
+├── screens/           # 页面组件
+│   └── HomeScreen.tsx # 主页示例（包含表单、列表、卡片等）
+├── components/        # 组件目录
+│   └── common/       # 通用组件（Button, Input, Card）
+├── constants/        # 常量配置
+│   └── theme.ts      # 主题配置（颜色、字体、间距）
+├── services/         # API 服务层
+├── utils/           # 工具函数
+├── hooks/           # 自定义 Hooks
+├── types/           # TypeScript 类型定义
+└── assets/          # 静态资源
+```
+
+## 🎨 组件示例
+
+### Button（按钮）
+```tsx
+import { Button } from './src/components/common';
+
+<Button 
+  title="点击我" 
+  onPress={() => alert('Hello!')}
+  variant="primary"  // primary | secondary | outline | text
+  size="medium"      // small | medium | large
+/>
+```
+
+### Input（输入框）
+```tsx
+import { Input } from './src/components/common';
+
+<Input
+  label="用户名"
+  placeholder="请输入用户名"
+  value={username}
+  onChangeText={setUsername}
+/>
+```
+
+### Card（卡片）
+```tsx
+import { Card } from './src/components/common';
+
+<Card>
+  <Text>卡片内容</Text>
+</Card>
+```
+
+---
 
 > **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
 
