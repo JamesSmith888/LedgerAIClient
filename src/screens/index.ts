@@ -3,6 +3,10 @@
  */
 export { HomeScreen } from './HomeScreen';
 
-export { DiscoverScreen } from './DiscoverScreen';
-
 export { BottomTabNavigator } from '../navigation/BottomTabNavigator';
+
+export { GiftedChatScreen } from './GiftedChatScreen';
+
+export { TestScreen } from './TestScreen';
+
+export { AddTransactionScreen } from './AddTransactionScreen';

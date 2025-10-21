@@ -1,7 +1,7 @@
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { Colors } from '../constants/theme.ts';
-import { DiscoverScreen } from '../screens';
+import { AddTransactionScreen, GiftedChatScreen } from '../screens';
 import { Text } from 'react-native';
+import { Colors } from '../constants/theme.ts';
 
 const Tab = createBottomTabNavigator();
 
@@ -26,27 +26,26 @@ export const BottomTabNavigator = () => {
       }}
     >
       <Tab.Screen
-        name="Discover"
-        component={DiscoverScreen}
+        name="AddTransaction"
+        component={AddTransactionScreen}
         options={{
-          tabBarLabel: '发现',
+          tabBarLabel: '记账',
           tabBarIcon: ({ color, size }) => (
-            <TabIcon icon={'🔍'} color={color} size={size} />
+            <Text style={{ fontSize: size, color }}>➕</Text>
           ),
         }}
-      ></Tab.Screen>
+      />
+
+      <Tab.Screen
+        name="Agent"
+        component={GiftedChatScreen}
+        options={{
+          tabBarLabel: 'Agent',
+          tabBarIcon: ({ color, size }) => (
+            <Text style={{ fontSize: size, color }}>🤖</Text>
+          ),
+        }}
+      />
     </Tab.Navigator>
   );
-};
-
-const TabIcon = ({
-  icon,
-  color,
-  size,
-}: {
-  icon: string;
-  color: string;
-  size: number;
-}) => {
-  return <Text style={{ fontSize: size, color }}>{icon}</Text>;
 };
