@@ -10,6 +10,7 @@ import {
 interface NumberKeypadProps {
   onNumberPress: (num: string) => void;
   onDeletePress: () => void;
+  onConfirm?: () => void; // 改为可选
 }
 
 export const NumberKeypad: React.FC<NumberKeypadProps> = ({
@@ -38,11 +39,9 @@ export const NumberKeypad: React.FC<NumberKeypadProps> = ({
                   onNumberPress(key);
                 }
               }}
-              activeOpacity={0.7}
+              activeOpacity={0.6}
             >
-              <Text
-                style={[styles.keyText, key === '⌫' && styles.deleteKeyText]}
-              >
+              <Text style={styles.keyText}>
                 {key}
               </Text>
             </TouchableOpacity>
@@ -55,32 +54,23 @@ export const NumberKeypad: React.FC<NumberKeypadProps> = ({
 
 const styles = StyleSheet.create({
   container: {
-    paddingTop: Spacing.md,
-    paddingBottom: Spacing.sm,
+    paddingVertical: Spacing.sm,
   },
   row: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    marginBottom: Spacing.sm,
-    paddingHorizontal: Spacing.md,
+    marginBottom: Spacing.xs,
   },
   key: {
     flex: 1,
-    height: 50,
-    backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.md,
+    height: 48, // 减小高度
     alignItems: 'center',
     justifyContent: 'center',
-    marginHorizontal: 4,
+    marginHorizontal: 2, // 减小间距
   },
   keyText: {
-    fontSize: FontSizes.xxl,
+    fontSize: 24, // 增大字体
     color: Colors.text,
-    fontWeight: '500',
-  },
-  deleteKeyText: {
-    fontSize: FontSizes.xl,
-    color: Colors.error,
-    fontWeight: '600',
+    fontWeight: '400', // 正常字重
   },
 });

@@ -1,5 +1,5 @@
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { AddTransactionScreen, GiftedChatScreen } from '../screens';
+import { AddTransactionScreen, GiftedChatScreen, ProfileScreen, TransactionListScreen } from '../screens';
 import { Text } from 'react-native';
 import { Colors } from '../constants/theme.ts';
 
@@ -25,13 +25,14 @@ export const BottomTabNavigator = () => {
         },
       }}
     >
+      {/* 首页 记账列表 */}
       <Tab.Screen
-        name="AddTransaction"
-        component={AddTransactionScreen}
+        name="TransactionList"
+        component={TransactionListScreen}
         options={{
-          tabBarLabel: '记账',
+          tabBarLabel: '账本',
           tabBarIcon: ({ color, size }) => (
-            <Text style={{ fontSize: size, color }}>➕</Text>
+            <Text style={{ fontSize: size, color }}>📒</Text>
           ),
         }}
       />
@@ -43,6 +44,17 @@ export const BottomTabNavigator = () => {
           tabBarLabel: 'Agent',
           tabBarIcon: ({ color, size }) => (
             <Text style={{ fontSize: size, color }}>🤖</Text>
+          ),
+        }}
+      />
+
+      <Tab.Screen
+        name="Profile"
+        component={ProfileScreen}
+        options={{
+          tabBarLabel: '我的',
+          tabBarIcon: ({ color, size }) => (
+            <Text style={{ fontSize: size, color }}>👤</Text>
           ),
         }}
       />

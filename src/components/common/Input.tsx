@@ -3,19 +3,14 @@
  */
 import React, { useState } from 'react';
 import {
-  StyleSheet,
-  Text,
-  TextInput,
-  TextInputProps,
   View,
+  TextInput,
+  Text,
+  StyleSheet,
   ViewStyle,
+  TextInputProps,
 } from 'react-native';
-import {
-  BorderRadius,
-  Colors,
-  FontSizes,
-  Spacing,
-} from '../../constants/theme';
+import { Colors, Spacing, FontSizes, BorderRadius } from '../../constants/theme';
 
 interface InputProps extends TextInputProps {
   label?: string;

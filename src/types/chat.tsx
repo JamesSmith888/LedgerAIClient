@@ -15,7 +15,7 @@ export interface ChatUser {
 }
 
 export interface WSMessage {
-  type: 'message' | 'typing' | 'error' | 'broadcast';
+  type: 'message' | 'typing' | 'error' | 'broadcast' | 'end';
   content?: string;
   timestamp?: number;
   sender?: 'user' | 'ai';

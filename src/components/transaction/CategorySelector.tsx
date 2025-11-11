@@ -25,7 +25,6 @@ export const CategorySelector: React.FC<CategorySelectorProps> = ({
 }) => {
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>类别</Text>
       <View style={layout === 'grid' ? styles.grid : styles.horizontal}>
         {categories.map(category => (
           <TouchableOpacity
@@ -64,22 +63,22 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: FontSizes.md,
-    fontWeight: '700',
+    fontWeight: '600',
     color: Colors.text,
-    marginBottom: Spacing.md,
-    paddingHorizontal: Spacing.md,
-    letterSpacing: 0.3,
+    marginBottom: Spacing.lg,
+    paddingHorizontal: Spacing.lg,
+    letterSpacing: 0.2,
   },
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    paddingHorizontal: Spacing.md,
-    gap: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
+    gap: Spacing.md,
   },
   horizontal: {
     flexDirection: 'row',
-    paddingHorizontal: Spacing.md,
-    gap: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
+    gap: Spacing.md,
   },
   categoryItem: {
     width: '22%',
@@ -87,26 +86,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: BorderRadius.xl,
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: Colors.border,
     backgroundColor: Colors.surface,
     ...Shadows.sm,
   },
   categoryItemSelected: {
-    backgroundColor: '#E8F5F0',
-    borderWidth: 3,
+    backgroundColor: '#F0F1FF',
+    borderWidth: 2,
     transform: [{ scale: 1.05 }],
     ...Shadows.md,
   },
   categoryIcon: {
-    fontSize: 36,
-    marginBottom: 2,
+    fontSize: 32,
+    marginBottom: 4,
   },
   categoryName: {
     fontSize: FontSizes.xs,
     color: Colors.textSecondary,
     textAlign: 'center',
-    fontWeight: '600',
+    fontWeight: '500',
   },
   categoryNameSelected: {
     fontWeight: '700',

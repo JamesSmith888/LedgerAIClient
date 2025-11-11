@@ -6,7 +6,7 @@ import {
   Shadows,
   Spacing,
 } from '../../constants/theme.ts';
-import { QUICK_AMOUNTS } from '../../types/transaction.ts';
+import { QUICK_AMOUNT } from '../../types/transaction.ts';
 
 interface QuickAmountSelectorProps {
   selectedAmount?: number;
@@ -21,7 +21,7 @@ export const QuickAmountSelector: React.FC<QuickAmountSelectorProps> = ({
     <View style={styles.container}>
       <Text style={styles.title}>快速选择金额</Text>
       <View style={styles.grid}>
-        {QUICK_AMOUNTS.map(amount => (
+        {QUICK_AMOUNT.map(amount => (
           <TouchableOpacity
             key={amount}
             style={[
@@ -52,16 +52,16 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: FontSizes.md,
-    fontWeight: '700',
+    fontWeight: '600',
     color: Colors.text,
-    marginBottom: Spacing.md,
-    paddingHorizontal: Spacing.md,
-    letterSpacing: 0.3,
+    marginBottom: Spacing.lg,
+    paddingHorizontal: Spacing.lg,
+    letterSpacing: 0.2,
   },
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    paddingHorizontal: Spacing.md,
+    paddingHorizontal: Spacing.lg,
     gap: Spacing.sm,
   },
   amountButton: {
@@ -69,7 +69,7 @@ const styles = StyleSheet.create({
     aspectRatio: 2,
     backgroundColor: Colors.surface,
     borderRadius: BorderRadius.lg,
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: Colors.border,
     alignItems: 'center',
     justifyContent: 'center',
@@ -78,7 +78,7 @@ const styles = StyleSheet.create({
   amountButtonSelected: {
     backgroundColor: Colors.primary,
     borderColor: Colors.primary,
-    transform: [{ scale: 1.05 }],
+    transform: [{ scale: 1.08 }],
     ...Shadows.md,
   },
   amountText: {

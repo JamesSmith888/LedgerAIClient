@@ -1,446 +1,552 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  SafeAreaView,
-  TouchableOpacity,
-  Alert,
+  ActivityIndicator,
+  FlatList,
+  Keyboard,
+  Modal,
   ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import { CategorySelector } from '../components/transaction/CategorySelector';
-import { QuickAmountSelector } from '../components/transaction/QuickAmountSelector';
-import { QuickTimeSelector } from '../components/transaction/QuickTimeSelector';
-import { DetailedInputPanel } from '../components/transaction/DetailedInputPanel';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  Category,
-  EXPENSE_CATEGORIES,
-  INCOME_CATEGORIES,
-  TransactionType,
-  Transaction,
-} from '../types/transaction';
-import { Colors, Spacing, FontSizes, BorderRadius, Shadows } from '../constants/theme';
+  BorderRadius,
+  Colors,
+  FontSizes,
+  FontWeights,
+  Shadows,
+  Spacing,
+} from '../constants/theme';
+import { useAuth } from '../context/AuthContext';
+import { toast } from '../utils/toast';
+import type { Category, Transaction, TransactionType } from '../types/transaction';
+import { LedgerType } from '../types/ledger';
+import { CategorySelector } from '../components/transaction/CategorySelector';
+import { NumberKeypad } from '../components/transaction/NumberKeypad';
+import { LedgerSelector } from '../components/ledger/LedgerSelector';
+import { useCategories } from '../context/CategoryContext';
+import { useLedger } from '../context/LedgerContext';
+import { transactionAPI } from '../api/services';
+import { CategoryPicker } from '../components/transaction/CategoryPicker';
+import { DatePicker } from '../components/transaction/DatePicker';
 
 export const AddTransactionScreen: React.FC = () => {
-  // ========== 状态管理 ==========
-  const [transactionType, setTransactionType] = useState<TransactionType>('expense');
-  const [selectedCategory, setSelectedCategory] = useState<Category | undefined>();
-  const [quickAmount, setQuickAmount] = useState<number | undefined>();
-  const [customAmount, setCustomAmount] = useState<string>('0');
-  const [selectedDaysAgo, setSelectedDaysAgo] = useState<number>(0);
-  const [description, setDescription] = useState<string>('');
-  const [showDetailedInput, setShowDetailedInput] = useState<boolean>(false);
+  const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets();
 
-  // 当前显示的分类列表
-  const currentCategories = transactionType === 'expense'
-    ? EXPENSE_CATEGORIES
-    : INCOME_CATEGORIES;
+  // ========== 上下文和状态 ==========
+  const { user } = useAuth(); // ✨ 获取用户信息
+  const { expenseCategories, incomeCategories, isLoading: categoriesLoading } = useCategories();
+  const { ledgers, currentLedger, setCurrentLedger } = useLedger();
 
-  // 获取最终金额（优先自定义，否则快速选择）
-  const getFinalAmount = (): number => {
-    if (showDetailedInput && parseFloat(customAmount) > 0) {
-      return parseFloat(customAmount);
-    }
-    return quickAmount || 0;
-  };
+  // 记账核心状态
+  const [transactionType, setTransactionType] = useState<TransactionType>('EXPENSE');
+  const [amount, setAmount] = useState('0');
+  const [selectedCategory, setSelectedCategory] = useState<Category | undefined>(undefined);
+  const [description, setDescription] = useState('');
+  const [transactionDate, setTransactionDate] = useState(new Date());
 
-  // ========== 处理函数 ==========
+  // UI 状态
+  const [isLoading, setIsLoading] = useState(false);
+  const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+
+  // ========== 初始化和副作用 ==========
+  // 切换收支类型时，重置分类和金额
+  useEffect(() => {
+    setSelectedCategory(undefined);
+  }, [transactionType]);
+
+  // 页面聚焦时，默认选中第一个支出分类
+  useFocusEffect(
+    useCallback(() => {
+      if (transactionType === 'EXPENSE' && expenseCategories.length > 0) {
+        setSelectedCategory(expenseCategories[0]);
+      } else if (transactionType === 'INCOME' && incomeCategories.length > 0) {
+        setSelectedCategory(incomeCategories[0]);
+      }
+    }, [expenseCategories, incomeCategories, transactionType])
+  );
+
+  // ========== 事件处理 ==========
 
   // 切换收支类型
   const handleTypeChange = (type: TransactionType) => {
-    setTransactionType(type);
-    setSelectedCategory(undefined);
-  };
-
-  // 选择快速金额
-  const handleQuickAmountSelect = (amount: number) => {
-    setQuickAmount(amount);
-    setCustomAmount('0'); // 清空自定义金额
-  };
-
-  // 处理数字输入（详细录入）
-  const handleNumberPress = (num: string) => {
-    setQuickAmount(undefined); // 清空快速选择
-
-    if (num === '.' && customAmount.includes('.')) {
-      return;
+    if (type !== transactionType) {
+      setTransactionType(type);
+      setAmount('0'); // 重置金额
     }
+  };
 
-    if (customAmount === '0' && num !== '.') {
-      setCustomAmount(num);
+  // 处理数字键盘输入
+  const handleNumberPress = (number: string) => {
+    if (amount.includes('.') && amount.split('.')[1].length >= 2) {
+      return; // 小数点后最多两位
+    }
+    if (amount === '0' && number !== '.') {
+      setAmount(number);
     } else {
-      const parts = (customAmount + num).split('.');
-      if (parts[1] && parts[1].length > 2) {
-        return;
-      }
-      setCustomAmount(customAmount + num);
+      setAmount(prev => prev + number);
     }
   };
 
-  // 处理删除
+  // 处理删除键
   const handleDeletePress = () => {
-    if (customAmount.length === 1) {
-      setCustomAmount('0');
-    } else {
-      setCustomAmount(customAmount.slice(0, -1));
-    }
+    setAmount(prev => (prev.length > 1 ? prev.slice(0, -1) : '0'));
   };
 
-  // 计算日期
+  // 获取最终要保存的金额
+  const getFinalAmount = (): number => {
+    const finalAmount = parseFloat(amount);
+    return isNaN(finalAmount) ? 0 : finalAmount;
+  };
+
+  // 获取交易日期（此处简化为当前时间）
   const getTransactionDate = (): Date => {
-    const date = new Date();
-    date.setDate(date.getDate() - selectedDaysAgo);
-    return date;
+    return transactionDate;
   };
 
-  // 快速保存（简单录入）
-  const handleQuickSave = () => {
+  // 快速保存
+  const handleQuickSave = async () => {
     const finalAmount = getFinalAmount();
 
     // 验证
-    if (!selectedCategory) {
-      Alert.alert('提示', '请选择分类');
-      return;
-    }
-
     if (finalAmount <= 0) {
-      Alert.alert('提示', '请选择或输入金额');
+      toast.info('请输入有效金额');
+      return;
+    }
+    if (!selectedCategory) {
+      toast.info('请选择一个分类');
       return;
     }
 
-    saveTransaction(finalAmount);
-  };
+    try {
+      setIsLoading(true);
+      Keyboard.dismiss();
 
-  // 保存交易
-  const saveTransaction = (amount: number) => {
-    if (!selectedCategory) return;
+      const transactionData = {
+        type: transactionType,
+        amount: finalAmount,
+        categoryId: selectedCategory.id,
+        description: description.trim(),
+        date: getTransactionDate().toISOString(),
+        ledgerId: currentLedger?.id,
+        accountId: user?._id, // ✨ 修正：使用 _id
+      };
 
-    const transaction: Transaction = {
-      id: Date.now().toString(),
-      type: transactionType,
-      amount: amount,
-      category: selectedCategory,
-      description: description.trim(),
-      date: getTransactionDate(),
-    };
+      await transactionAPI.create(transactionData as Omit<Transaction, 'id'>);
 
-    console.log('✅ 保存交易:', transaction);
-
-    // TODO: 调用 API 保存
-    // await transactionAPI.create(transaction);
-
-    Alert.alert(
-      '记账成功 ✓',
-      `${transactionType === 'expense' ? '支出' : '收入'}: ¥${amount}\n分类: ${selectedCategory.name}`,
-      [
-        {
-          text: '继续记账',
-          onPress: resetForm,
-        },
-        {
-          text: '完成',
-          style: 'cancel',
-          onPress: resetForm,
-        },
-      ]
-    );
-  };
-
-  // 重置表单
-  const resetForm = () => {
-    setQuickAmount(undefined);
-    setCustomAmount('0');
-    setSelectedCategory(undefined);
-    setDescription('');
-    setSelectedDaysAgo(0);
-    setShowDetailedInput(false);
+      toast.success('记账成功！');
+      setTimeout(() => navigation.goBack(), 300);
+    } catch (error) {
+      console.error('保存交易失败:', error);
+      toast.error('保存失败，请稍后重试');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   // ========== 渲染 ==========
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
+      <StatusBar
+        barStyle="dark-content"
+        backgroundColor={Colors.backgroundSecondary}
+      />
+
+      {/* ========== ✨ 新增：关闭按钮 ========== */}
+      <View style={styles.header}>
+        <TouchableOpacity
+          style={styles.closeButton}
+          onPress={() => navigation.goBack()}
+        >
+          <Text style={styles.closeButtonText}>✕</Text>
+        </TouchableOpacity>
+      </View>
+
       <ScrollView
         style={styles.scrollView}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
-        {/* ========== 顶部标题栏 ========== */}
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>记一笔</Text>
-        </View>
-
-        {/* ========== 收支切换 ========== */}
-        <View style={styles.typeSelector}>
-          <TouchableOpacity
-            style={[
-              styles.typeButton,
-              transactionType === 'expense' && styles.typeButtonActiveExpense,
-            ]}
-            onPress={() => handleTypeChange('expense')}
-            activeOpacity={0.8}
-          >
-            <Text
+        {/* ========== 区域1: 金额 & 收支类型 ========== */}
+        <View style={styles.amountSection}>
+          {/* 收支切换 */}
+          <View style={styles.typeSelector}>
+            <TouchableOpacity
               style={[
-                styles.typeButtonText,
-                transactionType === 'expense' && styles.typeButtonTextActive,
+                styles.typeButton,
+                transactionType === 'EXPENSE' && styles.typeButtonActive,
               ]}
+              onPress={() => handleTypeChange('EXPENSE')}
             >
-              💸 支出
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[
-              styles.typeButton,
-              transactionType === 'income' && styles.typeButtonActiveIncome,
-            ]}
-            onPress={() => handleTypeChange('income')}
-            activeOpacity={0.8}
-          >
-            <Text
+              <Text
+                style={[
+                  styles.typeButtonText,
+                  transactionType === 'EXPENSE' && styles.typeButtonTextActive,
+                ]}
+              >
+                支出
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
               style={[
-                styles.typeButtonText,
-                transactionType === 'income' && styles.typeButtonTextActive,
+                styles.typeButton,
+                transactionType === 'INCOME' && styles.typeButtonActive,
               ]}
+              onPress={() => handleTypeChange('INCOME')}
             >
-              💰 收入
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* ========== 分类选择（网格布局） ========== */}
-        <CategorySelector
-          categories={currentCategories}
-          selectedCategory={selectedCategory}
-          onSelect={setSelectedCategory}
-          layout="grid"
-        />
-
-        {/* ========== 快速金额选择 ========== */}
-        <QuickAmountSelector
-          selectedAmount={quickAmount}
-          onSelect={handleQuickAmountSelect}
-        />
-
-        {/* ========== 时间选择 ========== */}
-        <QuickTimeSelector
-          selectedDaysAgo={selectedDaysAgo}
-          onSelect={setSelectedDaysAgo}
-        />
-
-        {/* ========== 详细录入开关 ========== */}
-        <TouchableOpacity
-          style={styles.detailedToggle}
-          onPress={() => setShowDetailedInput(!showDetailedInput)}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.detailedToggleText}>
-            {showDetailedInput ? '📝 收起详细录入' : '✏️ 展开详细录入'}
-          </Text>
-          <Text style={styles.detailedToggleIcon}>
-            {showDetailedInput ? '▲' : '▼'}
-          </Text>
-        </TouchableOpacity>
-
-        {/* ========== 详细录入面板（折叠） ========== */}
-        <DetailedInputPanel
-          isExpanded={showDetailedInput}
-          amount={customAmount}
-          description={description}
-          onAmountChange={setCustomAmount}
-          onDescriptionChange={setDescription}
-          onNumberPress={handleNumberPress}
-          onDeletePress={handleDeletePress}
-        />
-
-        {/* 底部占位 */}
-        <View style={{ height: 100 }} />
-      </ScrollView>
-
-      {/* ========== 底部保存按钮（简单录入） ========== */}
-      {!showDetailedInput && (
-        <View style={styles.bottomBar}>
-          <View style={styles.amountPreview}>
-            <Text style={styles.amountPreviewLabel}>金额：</Text>
-            <Text style={[
-              styles.amountPreviewValue,
-              { color: transactionType === 'expense' ? Colors.error : Colors.success }
-            ]}>
-              ¥{getFinalAmount().toFixed(2)}
-            </Text>
+              <Text
+                style={[
+                  styles.typeButtonText,
+                  transactionType === 'INCOME' && styles.typeButtonTextActive,
+                ]}
+              >
+                收入
+              </Text>
+            </TouchableOpacity>
           </View>
 
-          <TouchableOpacity
-            style={[
-              styles.saveButton,
-              transactionType === 'expense'
-                ? styles.saveButtonExpense
-                : styles.saveButtonIncome
-            ]}
-            onPress={handleQuickSave}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.saveButtonText}>
-              快速保存 ✓
+          {/* 金额显示 */}
+          <View style={styles.amountDisplayContainer}>
+            <Text style={styles.currencySymbol}>¥</Text>
+            <Text
+              style={[
+                styles.amountText,
+                transactionType === 'EXPENSE'
+                  ? styles.amountTextExpense
+                  : styles.amountTextIncome,
+              ]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+            >
+              {getFinalAmount().toLocaleString()}
             </Text>
-          </TouchableOpacity>
+          </View>
         </View>
-      )}
 
-      {/* ========== 详细录入保存按钮 ========== */}
-      {showDetailedInput && (
-        <View style={styles.bottomBar}>
+        {/* ========== 区域2: 详情列表 ========== */}
+        <View style={styles.detailsSection}>
+          {/* 分类 */}
           <TouchableOpacity
-            style={[
-              styles.saveButton,
-              styles.saveButtonFull,
-              transactionType === 'expense'
-                ? styles.saveButtonExpense
-                : styles.saveButtonIncome
-            ]}
-            onPress={handleQuickSave}
-            activeOpacity={0.8}
+            style={styles.detailRow}
+            onPress={() => setShowCategoryPicker(true)}
           >
-            <Text style={styles.saveButtonText}>
-              保存记账 ✓
-            </Text>
+            <View style={styles.detailRowLeft}>
+              <Text style={styles.detailIcon}>
+                {selectedCategory?.icon || '🏷️'}
+              </Text>
+              <Text style={styles.detailLabel}>分类</Text>
+            </View>
+            <View style={styles.detailRowRight}>
+              <Text style={styles.detailValue}>
+                {selectedCategory?.name || '请选择'}
+              </Text>
+              <Text style={styles.detailArrow}>›</Text>
+            </View>
           </TouchableOpacity>
+
+          {/* 账本 */}
+          {ledgers.length > 1 && (
+            <View style={styles.detailRow}>
+              <LedgerSelector
+                mode="flat"
+                ledgers={ledgers}
+                currentLedger={currentLedger}
+                onSelect={ledger => {
+                  setCurrentLedger(ledger);
+                }}
+              />
+            </View>
+          )}
+
+          {/* 日期 */}
+          <TouchableOpacity
+            style={styles.detailRow}
+            onPress={() => setShowDatePicker(true)}
+          >
+            <View style={styles.detailRowLeft}>
+              <Text style={styles.detailIcon}>🗓️</Text>
+              <Text style={styles.detailLabel}>日期</Text>
+            </View>
+            <View style={styles.detailRowRight}>
+              <Text style={styles.detailValue}>
+                {formatDate(getTransactionDate())}
+              </Text>
+              <Text style={styles.detailArrow}>›</Text>
+            </View>
+          </TouchableOpacity>
+
+          {/* 备注 */}
+          <View style={styles.descriptionRow}>
+            <Text style={styles.detailIcon}>✍️</Text>
+            <TextInput
+              style={styles.descriptionInput}
+              placeholder="添加备注..."
+              placeholderTextColor={Colors.textLight}
+              value={description}
+              onChangeText={setDescription}
+            />
+          </View>
         </View>
-      )}
-    </SafeAreaView>
+
+        {/* ========== 区域3: 数字键盘 ========== */}
+        <View style={styles.keypadSection}>
+          <NumberKeypad
+            onNumberPress={handleNumberPress}
+            onDeletePress={handleDeletePress}
+          />
+        </View>
+
+        {/* 底部安全区域填充 */}
+        <View style={{ height: 120 }} />
+      </ScrollView>
+
+      {/* ========== 底部保存按钮 ========== */}
+      <View
+        style={[
+          styles.bottomBar,
+          { paddingBottom: Math.max(insets.bottom, Spacing.md) },
+        ]}
+      >
+        <TouchableOpacity
+          style={[
+            styles.saveButton,
+            transactionType === 'EXPENSE'
+              ? styles.saveButtonExpense
+              : styles.saveButtonIncome,
+            isLoading && styles.saveButtonDisabled,
+          ]}
+          onPress={handleQuickSave}
+          activeOpacity={0.8}
+          disabled={isLoading}
+        >
+          {isLoading ? (
+            <ActivityIndicator color={Colors.surface} />
+          ) : (
+            <Text style={styles.saveButtonText}>保 存</Text>
+          )}
+        </TouchableOpacity>
+      </View>
+
+      {/* ========== 分类选择器 Modal ========== */}
+      <CategoryPicker
+        visible={showCategoryPicker}
+        categories={
+          transactionType === 'EXPENSE' ? expenseCategories : incomeCategories
+        }
+        onSelect={category => {
+          setSelectedCategory(category);
+          setShowCategoryPicker(false);
+        }}
+        onClose={() => setShowCategoryPicker(false)}
+        currentCategory={selectedCategory}
+        title={transactionType === 'EXPENSE' ? '选择支出分类' : '选择收入分类'}
+      />
+
+      {/* ========== 日期选择器 Modal ========== */}
+      <DatePicker
+        visible={showDatePicker}
+        onSelect={date => {
+          setTransactionDate(date);
+          setShowDatePicker(false);
+        }}
+        onClose={() => setShowDatePicker(false)}
+        currentDate={transactionDate}
+      />
+    </View>
   );
+};
+
+// ========== 💡 学习点：格式化日期函数 ==========
+const formatDate = (date: Date): string => {
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+
+  if (date.toDateString() === today.toDateString()) {
+    return '今天';
+  }
+  if (date.toDateString() === yesterday.toDateString()) {
+    return '昨天';
+  }
+  return `${date.getMonth() + 1}月${date.getDate()}日`;
 };
 
 // ========== 样式 ==========
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.background,
+    backgroundColor: Colors.backgroundSecondary,
+  },
+  header: {
+    paddingHorizontal: Spacing.md,
+    paddingTop: Spacing.sm,
+    alignItems: 'flex-end',
+  },
+  closeButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: Colors.surface,
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...Shadows.sm,
+  },
+  closeButtonText: {
+    fontSize: FontSizes.md,
+    color: Colors.textSecondary,
+    fontWeight: '600',
   },
   scrollView: {
     flex: 1,
   },
-  header: {
-    paddingVertical: Spacing.lg,
-    paddingHorizontal: Spacing.md,
-    alignItems: 'center',
-    backgroundColor: Colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.divider,
-  },
-  headerTitle: {
-    fontSize: FontSizes.xxl,
-    fontWeight: '700',
-    color: Colors.text,
-    letterSpacing: 0.5,
-  },
 
-  // 收支切换
+  // ========== 金额区域 ==========
+  amountSection: {
+    paddingHorizontal: Spacing.lg,
+    paddingBottom: Spacing.lg,
+    backgroundColor: Colors.backgroundSecondary,
+  },
   typeSelector: {
     flexDirection: 'row',
-    margin: Spacing.md,
-    backgroundColor: Colors.background,
+    backgroundColor: Colors.surface,
     borderRadius: BorderRadius.lg,
-    padding: 6,
-    gap: 6,
+    padding: Spacing.xs,
+    alignSelf: 'center',
+    marginBottom: Spacing.lg,
     ...Shadows.sm,
   },
   typeButton: {
     flex: 1,
-    paddingVertical: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    minWidth: 80,
     alignItems: 'center',
-    borderRadius: BorderRadius.lg,
-    backgroundColor: Colors.surface,
-    borderWidth: 2,
-    borderColor: 'transparent',
   },
-  typeButtonActiveExpense: {
-    backgroundColor: Colors.expense,
-    borderColor: Colors.expense,
-    ...Shadows.md,
-  },
-  typeButtonActiveIncome: {
-    backgroundColor: Colors.income,
-    borderColor: Colors.income,
-    ...Shadows.md,
+  typeButtonActive: {
+    backgroundColor: Colors.background,
+    ...Shadows.sm,
   },
   typeButtonText: {
     fontSize: FontSizes.md,
     color: Colors.textSecondary,
-    fontWeight: '700',
-    letterSpacing: 0.5,
+    fontWeight: FontWeights.medium,
   },
   typeButtonTextActive: {
-    color: Colors.surface,
+    color: Colors.text,
+    fontWeight: FontWeights.semibold,
+  },
+  amountDisplayContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.sm,
+  },
+  currencySymbol: {
+    fontSize: FontSizes.xxxl,
+    color: Colors.textSecondary,
+    marginRight: Spacing.sm,
+    fontWeight: FontWeights.medium,
+  },
+  amountText: {
+    fontSize: 64,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  amountTextExpense: {
+    color: Colors.expense,
+  },
+  amountTextIncome: {
+    color: Colors.income,
   },
 
-  // 详细录入开关
-  detailedToggle: {
+  // ========== 详情列表区域 ==========
+  detailsSection: {
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.xl,
+    marginHorizontal: Spacing.md,
+    marginBottom: Spacing.lg,
+    ...Shadows.md,
+    overflow: 'hidden',
+  },
+  detailRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginHorizontal: Spacing.md,
-    marginVertical: Spacing.md,
+    paddingHorizontal: Spacing.lg,
     paddingVertical: Spacing.md,
-    paddingHorizontal: Spacing.lg,
-    backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 2,
-    borderColor: Colors.primaryLight,
-    borderStyle: 'dashed',
-    ...Shadows.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
   },
-  detailedToggleText: {
-    fontSize: FontSizes.md,
-    color: Colors.primary,
-    fontWeight: '700',
-  },
-  detailedToggleIcon: {
-    fontSize: FontSizes.md,
-    color: Colors.primary,
-    fontWeight: '700',
-  },
-
-  // 底部栏
-  bottomBar: {
-    backgroundColor: Colors.surface,
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.lg,
-    borderTopWidth: 1,
-    borderTopColor: Colors.divider,
+  detailRowLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.md,
-    ...Shadows.lg,
   },
-  amountPreview: {
+  detailRowRight: {
     flexDirection: 'row',
-    alignItems: 'baseline',
-    backgroundColor: Colors.background,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    borderRadius: BorderRadius.md,
+    alignItems: 'center',
   },
-  amountPreviewLabel: {
-    fontSize: FontSizes.sm,
+  detailIcon: {
+    fontSize: 22,
+    marginRight: Spacing.md,
+    width: 24,
+    textAlign: 'center',
+  },
+  detailLabel: {
+    fontSize: FontSizes.lg,
+    color: Colors.text,
+  },
+  detailValue: {
+    fontSize: FontSizes.lg,
     color: Colors.textSecondary,
-    fontWeight: '600',
+    marginRight: Spacing.sm,
   },
-  amountPreviewValue: {
-    fontSize: FontSizes.xxl,
-    fontWeight: '700',
-    letterSpacing: 0.5,
+  detailArrow: {
+    fontSize: FontSizes.lg,
+    color: Colors.textLight,
+  },
+  descriptionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
+  },
+  descriptionInput: {
+    flex: 1,
+    fontSize: FontSizes.lg,
+    color: Colors.text,
+    paddingVertical: Spacing.sm,
+  },
+
+  // ========== 键盘区域 ==========
+  keypadSection: {
+    paddingHorizontal: Spacing.md,
+  },
+
+  // ========== 底部栏 ==========
+  bottomBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: Colors.surface,
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
   },
   saveButton: {
-    flex: 1,
     paddingVertical: Spacing.md,
     borderRadius: BorderRadius.lg,
     alignItems: 'center',
     justifyContent: 'center',
     ...Shadows.md,
-  },
-  saveButtonFull: {
-    flex: 0,
-    width: '100%',
   },
   saveButtonExpense: {
     backgroundColor: Colors.expense,
@@ -451,7 +557,9 @@ const styles = StyleSheet.create({
   saveButtonText: {
     color: Colors.surface,
     fontSize: FontSizes.lg,
-    fontWeight: '700',
-    letterSpacing: 0.5,
+    fontWeight: FontWeights.bold,
+  },
+  saveButtonDisabled: {
+    opacity: 0.6,
   },
 });

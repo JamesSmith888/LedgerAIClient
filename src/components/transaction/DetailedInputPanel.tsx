@@ -10,8 +10,9 @@ import {
 } from '../../constants/theme';
 
 interface DetailedInputPanelProps {
-  amount: number;
+  amount: string;
   description: string;
+  onAmountChange: (text: string) => void;
   onDescriptionChange: (text: string) => void;
   onNumberPress: (num: string) => void;
   onDeletePress: () => void;
@@ -20,6 +21,7 @@ interface DetailedInputPanelProps {
 export const DetailedInputPanel: React.FC<DetailedInputPanelProps> = ({
   amount,
   description,
+  onAmountChange,
   onDescriptionChange,
   onNumberPress,
   onDeletePress,
@@ -59,50 +61,56 @@ export const DetailedInputPanel: React.FC<DetailedInputPanelProps> = ({
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: Colors.background,
+    backgroundColor: Colors.surfaceSecondary,
     paddingTop: Spacing.lg,
+    paddingBottom: Spacing.md,
   },
   divider: {
-    height: 8,
+    height: 1,
     backgroundColor: Colors.divider,
-    marginBottom: Spacing.md,
+    marginBottom: Spacing.lg,
+    marginHorizontal: Spacing.lg,
   },
   title: {
     fontSize: FontSizes.lg,
     fontWeight: '600',
     color: Colors.text,
-    paddingHorizontal: Spacing.md,
-    marginBottom: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    marginBottom: Spacing.lg,
+    letterSpacing: 0.2,
   },
   customAmountContainer: {
-    paddingHorizontal: Spacing.md,
-    marginBottom: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    marginBottom: Spacing.lg,
   },
   label: {
     fontSize: FontSizes.sm,
-    fontWeight: '600',
+    fontWeight: '500',
     color: Colors.textSecondary,
-    marginBottom: Spacing.xs,
+    marginBottom: Spacing.sm,
   },
   amountDisplay: {
     flexDirection: 'row',
     alignItems: 'baseline',
     backgroundColor: Colors.surface,
-    padding: Spacing.md,
-    borderRadius: BorderRadius.md,
+    paddingVertical: Spacing.lg,
+    paddingHorizontal: Spacing.lg,
+    borderRadius: BorderRadius.xl,
   },
   currencySymbol: {
     fontSize: FontSizes.xl,
     color: Colors.textSecondary,
     marginRight: 8,
+    fontWeight: '500',
   },
   amountText: {
-    fontSize: FontSizes.xxxl,
-    fontWeight: '600',
+    fontSize: 36,
+    fontWeight: '700',
     color: Colors.text,
+    letterSpacing: 0.5,
   },
   section: {
-    paddingHorizontal: Spacing.md,
-    marginBottom: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    marginBottom: Spacing.lg,
   },
 });
