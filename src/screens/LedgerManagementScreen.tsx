@@ -2,9 +2,8 @@
  * 账本管理页面
  * 展示用户的所有账本（个人账本 + 共享账本）
  */
-import React, { useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
-  Alert,
   FlatList,
   RefreshControl,
   StyleSheet,
@@ -15,7 +14,8 @@ import {
 import { showConfirm } from '../utils/toast';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import { Card } from '../components/common';
+import { Card, Icon } from '../components/common';
+import { LedgerActionSheet } from '../components/ledger/LedgerActionSheet';
 import {
   BorderRadius,
   Colors,
@@ -25,12 +25,18 @@ import {
   Spacing,
 } from '../constants/theme';
 import { useLedger } from '../context/LedgerContext';
+import { useAuth } from '../context/AuthContext';
 import type { Ledger } from '../types/ledger';
 import { LedgerType } from '../types/ledger';
 
 export const LedgerManagementScreen: React.FC = () => {
   const navigation = useNavigation();
-  const { ledgers, currentLedger, setCurrentLedger, refreshLedgers, deleteLedger } = useLedger();
+  const { ledgers, currentLedger, defaultLedgerId, setCurrentLedger, setDefaultLedger, refreshLedgers, deleteLedger } = useLedger();
+  const { user } = useAuth();
+
+  // 底部弹窗状态
+  const [actionSheetVisible, setActionSheetVisible] = useState(false);
+  const [selectedLedger, setSelectedLedger] = useState<Ledger | null>(null);
 
   // 页面聚焦时刷新数据
   useFocusEffect(
@@ -53,6 +59,20 @@ export const LedgerManagementScreen: React.FC = () => {
     (navigation as any).navigate('CreateLedger', { type: 'shared' });
   };
 
+  // 处理加入账本
+  const handleJoinByCode = () => {
+    (navigation as any).navigate('JoinByCode');
+  };
+
+  // 处理设置默认账本
+  const handleSetDefaultLedger = async (ledger: Ledger) => {
+    try {
+      await setDefaultLedger(ledger);
+    } catch (error) {
+      // Error already handled in context
+    }
+  };
+
   // 处理删除账本
   const handleDeleteLedger = (ledger: Ledger) => {
     showConfirm(
@@ -66,89 +86,103 @@ export const LedgerManagementScreen: React.FC = () => {
 
   // 渲染账本卡片
   const renderLedgerItem = ({ item }: { item: Ledger }) => {
-    const isActive = currentLedger?.id === item.id;
+    // 在账本管理页面，高亮显示默认账本而不是当前账本
+    const isDefault = defaultLedgerId === item.id;
     const isPersonal = item.type === LedgerType.PERSONAL;
+    const currentUserId = user?._id ? Number(user._id) : 0;
+    const isOwner = currentUserId === item.ownerUserId;
+    const isJoined = !isOwner && item.type === LedgerType.SHARED; // 受邀加入的账本
 
     return (
-      <TouchableOpacity
-        activeOpacity={0.7}
-        onPress={() => handleLedgerPress(item)}
-      >
-        <Card style={isActive ? styles.ledgerCardActive : styles.ledgerCard}>
-          {/* 选中状态圆点 - 右上角徽章 */}
-          {isActive && <View style={styles.activeCheckmark} />}
-          
-          <View style={styles.ledgerCardContent}>
-            {/* 左侧图标和信息 */}
-            <View style={styles.ledgerInfo}>
-              <View
-                style={[
-                  styles.ledgerIconContainer,
-                  isActive && styles.ledgerIconContainerActive,
-                  { 
-                    backgroundColor: isPersonal 
-                      ? Colors.primary + '15' 
-                      : Colors.accent.orange + '15' 
-                  },
-                ]}
-              >
-                <Text style={styles.ledgerIcon}>
-                  {isPersonal ? '📖' : '👨‍👩‍👧‍👦'}
-                </Text>
-              </View>
-              <View style={styles.ledgerTextInfo}>
-                <Text style={styles.ledgerName}>{item.name}</Text>
-                <Text style={styles.ledgerType}>
-                  {item.typeName}
-                  {!isPersonal && item.memberCount && ` · ${item.memberCount}名成员`}
-                </Text>
-                {item.description && (
-                  <Text style={styles.ledgerDescription} numberOfLines={1}>
-                    {item.description}
-                  </Text>
-                )}
-              </View>
+      <Card style={[
+        isDefault ? styles.ledgerCardActive : styles.ledgerCard,
+      ] as any}>
+        {/* 左上角标签 */}
+        <View style={styles.badgeContainer}>
+          {/* 默认账本徽章 */}
+          {isDefault && (
+            <View style={styles.defaultBadge}>
+              <Icon
+                name="star"
+                size={12}
+                color={Colors.accent.yellow}
+                style={styles.badgeIcon}
+              />
+              <Text style={styles.defaultBadgeText}>默认</Text>
             </View>
-
-            {/* 右侧操作按钮 */}
-            <TouchableOpacity
-              style={styles.moreButton}
-              onPress={() => {
-                Alert.alert(
-                  item.name,
-                  '选择操作',
-                  [
-                    {
-                      text: isActive ? '当前账本' : '切换到此账本',
-                      onPress: () => !isActive && setCurrentLedger(item),
-                      style: isActive ? 'cancel' : 'default',
-                    },
-                    {
-                      text: '查看详情',
-                      onPress: () => handleLedgerPress(item),
-                    },
-                    {
-                      text: '删除账本',
-                      onPress: () => handleDeleteLedger(item),
-                      style: 'destructive',
-                    },
-                    { text: '取消', style: 'cancel' },
-                  ]
-                );
-              }}
+          )}
+          {/* 受邀加入徽章 */}
+          {isJoined && (
+            <View style={styles.joinedBadge}>
+              <Icon
+                name="ticket"
+                size={12}
+                color={Colors.accent.purple}
+                style={styles.badgeIcon}
+              />
+              <Text style={styles.joinedBadgeText}>受邀</Text>
+            </View>
+          )}
+        </View>
+        
+        <TouchableOpacity
+          style={styles.ledgerCardContent}
+          activeOpacity={0.7}
+          onPress={() => handleLedgerPress(item)}
+        >
+          {/* 左侧图标和信息 */}
+          <View style={styles.ledgerInfo}>
+            <View
+              style={[
+                styles.ledgerIconContainer,
+                isDefault && styles.ledgerIconContainerActive,
+                { 
+                  backgroundColor: isPersonal 
+                    ? Colors.primary + '15' 
+                    : Colors.accent.orange + '15' 
+                },
+              ]}
             >
-              <Text style={styles.moreButtonText}>⋯</Text>
-            </TouchableOpacity>
+              <Icon
+                name={isPersonal ? 'book' : 'people'}
+                size={28}
+                color={isPersonal ? Colors.primary : Colors.accent.orange}
+              />
+            </View>
+            <View style={styles.ledgerTextInfo}>
+              <Text style={styles.ledgerName}>{item.name}</Text>
+              <Text style={styles.ledgerType}>
+                {item.typeName}
+                {!isPersonal && item.memberCount && ` · ${item.memberCount}名成员`}
+              </Text>
+              {item.description && (
+                <Text style={styles.ledgerDescription} numberOfLines={1}>
+                  {item.description}
+                </Text>
+              )}
+            </View>
           </View>
-        </Card>
-      </TouchableOpacity>
+        </TouchableOpacity>
+
+        {/* 右侧操作按钮 - 独立点击区域 */}
+        <TouchableOpacity
+          style={styles.moreButton}
+          onPress={() => {
+            setSelectedLedger(item);
+            setActionSheetVisible(true);
+          }}
+          activeOpacity={0.6}
+        >
+          <Icon name="ellipsis-vertical" size={18} color={Colors.text} />
+        </TouchableOpacity>
+      </Card>
     );
   };
 
   // 空状态
   const renderEmpty = () => (
     <View style={styles.emptyContainer}>
-      <Text style={styles.emptyIcon}>📖</Text>
+      <Icon name="book-outline" size={72} color={Colors.textLight} style={styles.emptyIcon} />
       <Text style={styles.emptyText}>还没有账本</Text>
       <Text style={styles.emptyHint}>点击下方按钮创建你的第一个账本</Text>
     </View>
@@ -188,25 +222,65 @@ export const LedgerManagementScreen: React.FC = () => {
 
         {/* 底部按钮 */}
         <View style={styles.bottomButtons}>
-          <TouchableOpacity
-            style={[styles.createButton, styles.createButtonPersonal]}
-            onPress={handleCreatePersonal}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.createButtonIcon}>📖</Text>
-            <Text style={styles.createButtonText}>创建个人账本</Text>
-          </TouchableOpacity>
+          {/* 第一行：创建按钮 */}
+          <View style={styles.buttonRow}>
+            <TouchableOpacity
+              style={[styles.createButton, styles.createButtonPersonal]}
+              onPress={handleCreatePersonal}
+              activeOpacity={0.8}
+            >
+              <Icon name="book" size={20} color={Colors.surface} style={styles.createButtonIcon} />
+              <Text style={styles.createButtonText}>创建个人</Text>
+            </TouchableOpacity>
 
+            <TouchableOpacity
+              style={[styles.createButton, styles.createButtonShared]}
+              onPress={handleCreateShared}
+              activeOpacity={0.8}
+            >
+              <Icon name="people" size={20} color={Colors.surface} style={styles.createButtonIcon} />
+              <Text style={styles.createButtonText}>创建共享</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* 第二行：加入按钮 */}
           <TouchableOpacity
-            style={[styles.createButton, styles.createButtonShared]}
-            onPress={handleCreateShared}
+            style={[styles.createButton, styles.createButtonJoin]}
+            onPress={handleJoinByCode}
             activeOpacity={0.8}
           >
-            <Text style={styles.createButtonIcon}>👨‍👩‍👧‍👦</Text>
-            <Text style={styles.createButtonText}>创建共享账本</Text>
+            <Icon name="link" size={20} color={Colors.surface} style={styles.createButtonIcon} />
+            <Text style={styles.createButtonText}>输入邀请码加入</Text>
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* 账本操作底部弹窗 */}
+      <LedgerActionSheet
+        visible={actionSheetVisible}
+        ledger={selectedLedger}
+        isDefault={selectedLedger?.id === defaultLedgerId}
+        onClose={() => {
+          setActionSheetVisible(false);
+          setSelectedLedger(null);
+        }}
+        onSetDefault={() => {
+          if (selectedLedger) {
+            handleSetDefaultLedger(selectedLedger);
+          }
+          setActionSheetVisible(false);
+        }}
+        onViewDetail={() => {
+          if (selectedLedger) {
+            handleLedgerPress(selectedLedger);
+          }
+        }}
+        onDelete={() => {
+          if (selectedLedger) {
+            handleDeleteLedger(selectedLedger);
+          }
+        }}
+      />
     </SafeAreaView>
   );
 };
@@ -256,12 +330,13 @@ const styles = StyleSheet.create({
 
   // 账本卡片 - Telegram 风格：微妙的视觉提示
   ledgerCard: {
-    marginBottom: Spacing.sm, // 缩小卡片间距，更紧凑
+    marginBottom: Spacing.sm,
     paddingVertical: Spacing.md,
     paddingHorizontal: Spacing.lg,
     backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.lg, // 稍小的圆角，更精致
+    borderRadius: BorderRadius.lg,
     ...Shadows.sm,
+    position: 'relative',
   },
   ledgerCardActive: {
     marginBottom: Spacing.sm,
@@ -270,35 +345,43 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surface,
     borderRadius: BorderRadius.lg,
     ...Shadows.md,
-    // Telegram 风格：微妙的左侧强调条
-    borderLeftWidth: 4, // 增加到 4px，更明显
+    borderLeftWidth: 4,
     borderLeftColor: Colors.primary,
+    position: 'relative',
+  },
+  badgeContainer: {
+    position: 'absolute',
+    top: Spacing.sm,
+    left: Spacing.sm,
+    flexDirection: 'row',
+    gap: Spacing.xs,
+    zIndex: 1,
   },
   ledgerCardContent: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    flex: 1,
   },
   ledgerInfo: {
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
-    paddingRight: Spacing.xs, // 右侧留白
+    paddingRight: Spacing.xs,
   },
   ledgerIconContainer: {
-    width: 54, // 稍微缩小图标容器
-    height: 54,
-    borderRadius: BorderRadius.lg,
+    width: 56,
+    height: 56,
+    borderRadius: BorderRadius.xl,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: Spacing.md,
   },
   ledgerIconContainerActive: {
-    // 选中时图标容器略微增强
-    transform: [{ scale: 1.03 }],
+    transform: [{ scale: 1.05 }],
   },
   ledgerIcon: {
-    fontSize: 28,
+    fontSize: 30,
   },
   ledgerTextInfo: {
     flex: 1,
@@ -310,7 +393,38 @@ const styles = StyleSheet.create({
     color: Colors.text,
     marginBottom: Spacing.xs / 2, // 恢复原来的间距
   },
-  // Telegram 风格的勾选标记 - 右上角圆点徽章
+  // 默认账本徽章 - 右上角星标
+  defaultBadge: {
+    backgroundColor: Colors.accent.yellow + '20',
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.xs / 2,
+    borderRadius: BorderRadius.sm,
+    borderWidth: 1,
+    borderColor: Colors.accent.yellow + '40',
+  },
+  defaultBadgeText: {
+    fontSize: FontSizes.xs,
+    fontWeight: FontWeights.semibold,
+    color: Colors.accent.yellow,
+  },
+  badgeIcon: {
+    marginRight: Spacing.xs / 2,
+  },
+  // 受邀加入徽章
+  joinedBadge: {
+    backgroundColor: Colors.accent.purple + '20',
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.xs / 2,
+    borderRadius: BorderRadius.sm,
+    borderWidth: 1,
+    borderColor: Colors.accent.purple + '40',
+  },
+  joinedBadgeText: {
+    fontSize: FontSizes.xs,
+    fontWeight: FontWeights.semibold,
+    color: Colors.accent.purple,
+  },
+  // Telegram 风格的勾选标记 - 右上角圆点徽章（已废弃，使用默认徽章替代）
   activeCheckmark: {
     position: 'absolute',
     top: Spacing.md,
@@ -333,34 +447,31 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   moreButton: {
-    width: 40,
-    height: 40,
-    borderRadius: BorderRadius.lg,
+    position: 'absolute',
+    top: Spacing.md,
+    right: Spacing.md,
+    width: 36,
+    height: 36,
+    borderRadius: BorderRadius.round,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'transparent', // 改为透明，更简洁
-    marginLeft: Spacing.xs,
-  },
-  moreButtonText: {
-    fontSize: 22,
-    color: Colors.textSecondary,
-    fontWeight: '600',
+    backgroundColor: Colors.backgroundSecondary,
+    zIndex: 10,
   },
 
   // 空状态 - 更友好的视觉
   emptyContainer: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: Spacing.xxl * 2.5,
+    paddingVertical: Spacing.xxl * 3,
     paddingHorizontal: Spacing.xl,
   },
   emptyIcon: {
-    fontSize: 72,
     marginBottom: Spacing.xl,
-    opacity: 0.6,
+    opacity: 0.5,
   },
   emptyText: {
-    fontSize: FontSizes.xl,
+    fontSize: FontSizes.xxl,
     fontWeight: FontWeights.bold,
     color: Colors.text,
     marginBottom: Spacing.md,
@@ -369,34 +480,39 @@ const styles = StyleSheet.create({
     fontSize: FontSizes.md,
     color: Colors.textSecondary,
     textAlign: 'center',
-    lineHeight: 24,
-    maxWidth: 280,
+    lineHeight: 22,
+    maxWidth: 300,
   },
 
-  // 底部按钮 - 渐变风格
+  // 底部按钮 - 优化布局
   bottomButtons: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    flexDirection: 'row',
+    flexDirection: 'column',
     paddingHorizontal: Spacing.lg,
     paddingTop: Spacing.md,
     paddingBottom: Spacing.xl,
     backgroundColor: Colors.surface,
-    borderTopWidth: 1,
+    borderTopWidth: 0.5,
     borderTopColor: Colors.divider,
-    gap: Spacing.sm, // 缩小按钮间距
+    gap: Spacing.sm,
     ...Shadows.xl,
   },
+  buttonRow: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+  },
   createButton: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: Spacing.md + 2, // 稍微增加按钮高度
-    borderRadius: BorderRadius.lg, // 统一圆角
-    ...Shadows.md, // 减弱阴影
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    ...Shadows.sm,
+    elevation: 3,
+    flex: 1,
   },
   createButtonPersonal: {
     backgroundColor: Colors.primary,
@@ -404,14 +520,15 @@ const styles = StyleSheet.create({
   createButtonShared: {
     backgroundColor: Colors.accent.orange,
   },
+  createButtonJoin: {
+    backgroundColor: Colors.accent.green,
+  },
   createButtonIcon: {
-    fontSize: 18,
     marginRight: Spacing.xs,
   },
   createButtonText: {
     color: Colors.surface,
     fontSize: FontSizes.md,
     fontWeight: FontWeights.bold,
-    letterSpacing: 0.2,
   },
 });

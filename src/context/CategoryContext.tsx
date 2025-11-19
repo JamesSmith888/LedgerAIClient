@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { Category } from '../types/transaction';
 import { categoryAPI, CategoryResponse } from '../api/services';
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '../types/transaction';
+import { useAuth } from './AuthContext';
 
 interface CategoryContextType {
     categories: Category[];
@@ -24,6 +25,9 @@ const convertToCategory = (response: CategoryResponse): Category => ({
 });
 
 export const CategoryProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+    // ========== 获取认证状态 ==========
+    const { isAuthenticated, isLoading: authLoading } = useAuth();
+
     const [categories, setCategories] = useState<Category[]>([]);
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
@@ -52,10 +56,19 @@ export const CategoryProvider: React.FC<{ children: ReactNode }> = ({ children }
         }
     };
 
-    // 组件挂载时加载分类
+    // 组件挂载时加载分类 - 只在用户已认证后执行
     useEffect(() => {
-        loadCategories();
-    }, []);
+        // 等待认证状态加载完成，且用户已登录后才加载数据
+        if (!authLoading && isAuthenticated) {
+            console.log('[CategoryContext] 用户已认证，开始加载分类数据');
+            loadCategories();
+        } else if (!authLoading && !isAuthenticated) {
+            // 用户未登录，使用预定义的分类数据
+            console.log('[CategoryContext] 用户未认证，使用预定义分类数据');
+            const defaultCategories = [...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES];
+            setCategories(defaultCategories);
+        }
+    }, [authLoading, isAuthenticated]);
 
     // 计算支出和收入分类
     const expenseCategories = categories.filter(c => c.type === 'EXPENSE');

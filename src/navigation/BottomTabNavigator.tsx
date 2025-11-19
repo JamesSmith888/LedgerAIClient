@@ -1,7 +1,8 @@
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { AddTransactionScreen, GiftedChatScreen, ProfileScreen, TransactionListScreen } from '../screens';
-import { Text } from 'react-native';
+import { ReportScreen } from '../screens/ReportScreen';
 import { Colors } from '../constants/theme.ts';
+import { Icon } from '../components/common';
 
 const Tab = createBottomTabNavigator();
 
@@ -32,7 +33,19 @@ export const BottomTabNavigator = () => {
         options={{
           tabBarLabel: '账本',
           tabBarIcon: ({ color, size }) => (
-            <Text style={{ fontSize: size, color }}>📒</Text>
+            <Icon name="book" size={size} color={color} />
+          ),
+        }}
+      />
+
+      {/* 图表 */}
+      <Tab.Screen
+        name="Report"
+        component={ReportScreen}
+        options={{
+          tabBarLabel: '图表',
+          tabBarIcon: ({ color, size }) => (
+            <Icon name="stats-chart" size={size} color={color} />
           ),
         }}
       />
@@ -43,7 +56,7 @@ export const BottomTabNavigator = () => {
         options={{
           tabBarLabel: 'Agent',
           tabBarIcon: ({ color, size }) => (
-            <Text style={{ fontSize: size, color }}>🤖</Text>
+            <Icon name="chatbubbles" size={size} color={color} />
           ),
         }}
       />
@@ -54,7 +67,7 @@ export const BottomTabNavigator = () => {
         options={{
           tabBarLabel: '我的',
           tabBarIcon: ({ color, size }) => (
-            <Text style={{ fontSize: size, color }}>👤</Text>
+            <Icon name="person" size={size} color={color} />
           ),
         }}
       />

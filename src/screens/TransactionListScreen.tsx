@@ -2,17 +2,21 @@
  * 记账列表页
  * 展示所有记账记录，支持按类型筛选
  */
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     FlatList,
+    Modal,
+    Pressable,
     RefreshControl,
     StyleSheet,
     Text,
     TouchableOpacity,
     View,
+    PanResponder,
+    Animated,
 } from 'react-native';
 import { toast } from '../utils/toast';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Card } from '../components/common';
 import {
@@ -31,34 +35,126 @@ import { LedgerSelector } from '../components/common';
 import { useLedger } from '../context/LedgerContext';
 import { Ledger, LedgerType } from '../types/ledger';
 import { TransactionMoveSheet } from '../components/transaction/TransactionMoveSheet';
-import { TransactionDetailSheet } from '../components/transaction/TransactionDetailSheet';
+import { Icon } from '../components/common';
+import { CategoryIcon } from '../components/common/CategoryIcon';
+import { MonthPickerSheet } from '../components/transaction/MonthPickerSheet';
+import { DailyStatisticsCalendar } from '../components/transaction/DailyStatisticsCalendar';
 
 type FilterType = 'ALL' | 'EXPENSE' | 'INCOME';
+
+type SortField = 'transactionDateTime' | 'amount' | 'createTime';
+type SortDirection = 'ASC' | 'DESC';
+
+interface SortOption {
+    field: SortField;
+    direction: SortDirection;
+    label: string;
+    icon: string;
+}
+
+// 排序选项配置
+const SORT_OPTIONS: SortOption[] = [
+    { field: 'transactionDateTime', direction: 'DESC', label: '时间降序', icon: 'time' },
+    { field: 'transactionDateTime', direction: 'ASC', label: '时间升序', icon: 'time' },
+    { field: 'amount', direction: 'DESC', label: '金额降序', icon: 'cash' },
+    { field: 'amount', direction: 'ASC', label: '金额升序', icon: 'cash' },
+];
+
+// 分组类型定义
+type GroupByType = 'none' | 'category' | 'amount' | 'creator';
+
+interface GroupByOption {
+    type: GroupByType;
+    label: string;
+    icon: string;
+    description: string;
+}
+
+// 分组选项配置
+const GROUP_BY_OPTIONS: GroupByOption[] = [
+    { type: 'none', label: '不分组', icon: 'list', description: '平铺显示所有记录' },
+    { type: 'category', label: '按分类', icon: 'pricetag', description: '按消费分类分组显示' },
+    { type: 'amount', label: '按金额', icon: 'cash', description: '按金额区间分组显示' },
+    { type: 'creator', label: '按创建人', icon: 'person', description: '按记录创建人分组' },
+];
+
+// 金额区间定义
+interface AmountRange {
+    min: number;
+    max: number;
+    label: string;
+    icon: string;
+}
+
+const AMOUNT_RANGES: AmountRange[] = [
+    { min: 0, max: 50, label: '小额消费', icon: 'cash-outline' },
+    { min: 50, max: 200, label: '中等消费', icon: 'cash' },
+    { min: 200, max: 1000, label: '大额消费', icon: 'diamond-outline' },
+    { min: 1000, max: Infinity, label: '特大消费', icon: 'trophy' },
+];
+
+// 分组数据结构
+interface TransactionGroup {
+    key: string;
+    title: string;
+    icon: string;
+    transactions: Transaction[];
+    totalAmount: number;
+    count: number;
+}
 
 // 获取账本图标
 const getLedgerIcon = (type: LedgerType): string => {
     switch (type) {
         case LedgerType.PERSONAL:
-            return '📖';
+            return 'book-outline';
         case LedgerType.SHARED:
-            return '👨‍👩‍👧‍👦';
+            return 'people';
         case LedgerType.BUSINESS:
-            return '🏢';
+            return 'business';
         default:
-            return '📖';
+            return 'book-outline';
     }
 };
 
 export const TransactionListScreen: React.FC = () => {
     const navigation = useNavigation();
+    const insets = useSafeAreaInsets();
 
     const { categories, refreshCategories } = useCategories();
 
     // ========== ✨ 新增：账本相关状态 ==========
-    const { ledgers, currentLedger, setCurrentLedger } = useLedger();
+    const { ledgers, currentLedger, defaultLedgerId, setCurrentLedger } = useLedger();
 
     // 筛选账本
     const [filterLedger, setFilterLedger] = useState<Ledger | null>(null);
+    // 记录上一次的默认账本 ID（用于检测默认账本是否变化）
+    const [prevDefaultLedgerId, setPrevDefaultLedgerId] = useState<number | null>(null);
+
+    // 管理默认账本的自动选中逻辑
+    useEffect(() => {
+        if (!ledgers.length) return;
+
+        // 场景1：初始加载（filterLedger 为 null 且 prevDefaultLedgerId 也为 null，说明是首次加载）
+        if (!filterLedger && !prevDefaultLedgerId && defaultLedgerId) {
+            const defaultLedger = ledgers.find(l => l.id === defaultLedgerId);
+            if (defaultLedger) {
+                setFilterLedger(defaultLedger);
+                setPrevDefaultLedgerId(defaultLedgerId);
+            }
+            return;
+        }
+
+        // 场景2：默认账本变化了（用户在账本管理页面修改了默认账本）
+        if (defaultLedgerId && prevDefaultLedgerId !== defaultLedgerId) {
+            const newDefaultLedger = ledgers.find(l => l.id === defaultLedgerId);
+            if (newDefaultLedger) {
+                // 切换到新的默认账本
+                setFilterLedger(newDefaultLedger);
+                setPrevDefaultLedgerId(defaultLedgerId);
+            }
+        }
+    }, [defaultLedgerId, ledgers, prevDefaultLedgerId]);
 
     // ========== 状态管理 ==========
     const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -66,21 +162,36 @@ export const TransactionListScreen: React.FC = () => {
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
     const [moveSheetVisible, setMoveSheetVisible] = useState<boolean>(false);
-    const [detailSheetVisible, setDetailSheetVisible] = useState<boolean>(false);
     const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
     const [movingLedgerId, setMovingLedgerId] = useState<number | null>(null);
+
+    // 当前选中的月份（默认当前月）
+    const [selectedMonth, setSelectedMonth] = useState<Date>(new Date());
+
+    // 排序相关状态
+    const [sortField, setSortField] = useState<SortField>('transactionDateTime');
+    const [sortDirection, setSortDirection] = useState<SortDirection>('DESC');
+    const [sortSheetVisible, setSortSheetVisible] = useState<boolean>(false);
+
+    // 分组相关状态
+    const [groupBy, setGroupBy] = useState<GroupByType>('none');
+    const [groupSheetVisible, setGroupSheetVisible] = useState<boolean>(false);
 
     // 分页相关状态
     const [currentPage, setCurrentPage] = useState<number>(0);
     const [hasMore, setHasMore] = useState<boolean>(true);
     const [totalElements, setTotalElements] = useState<number>(0);
 
+    // ========== ✨ 新增：月份选择器和日历热力图状态 ==========
+    const [monthPickerVisible, setMonthPickerVisible] = useState<boolean>(false);
+    const [calendarVisible, setCalendarVisible] = useState<boolean>(false); // 默认收起
+
     // ========== 数据加载 ==========
     useFocusEffect(
         useCallback(() => {
             // 页面聚焦时加载数据
             loadTransactions();
-        }, [filterType, filterLedger]) // 当筛选条件变化时重新加载
+        }, [filterType, filterLedger, selectedMonth, sortField, sortDirection]) // 当筛选条件、月份或排序变化时重新加载
     );
 
     // 根据categoryId查找category对象
@@ -103,13 +214,28 @@ export const TransactionListScreen: React.FC = () => {
 
             const page = isLoadMore ? currentPage + 1 : 0;
 
+            // 将前端枚举转换为后端数字代码
+            // INCOME -> 1, EXPENSE -> 2
+            let typeCode: number | null = null;
+            if (filterType === 'INCOME') {
+                typeCode = 1;
+            } else if (filterType === 'EXPENSE') {
+                typeCode = 2;
+            }
+
+            // 计算当月的开始和结束时间
+            const startTime = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), 1);
+            const endTime = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0, 23, 59, 59, 999);
+
             const response = await transactionAPI.query({
                 ledgerId: filterLedger?.id || null,
-                type: filterType === 'ALL' ? null : filterType,
+                type: typeCode,
+                startTime: startTime.toISOString(),
+                endTime: endTime.toISOString(),
                 page,
                 size: 20,
-                sortBy: 'transactionDateTime',
-                sortDirection: 'DESC',
+                sortBy: sortField,
+                sortDirection: sortDirection,
             });
 
             console.log('获取到的交易记录:', response);
@@ -160,6 +286,13 @@ export const TransactionListScreen: React.FC = () => {
     );
 
     // ========== 格式化函数 ==========
+    // 格式化月份标题（例如：2024年11月）
+    const formatMonthTitle = (date: Date): string => {
+        const year = date.getFullYear();
+        const month = date.getMonth() + 1;
+        return `${year}年${month}月`;
+    };
+
     // 格式化日期
     const formatDate = (dateString: string): string => {
         const date = new Date(dateString);
@@ -185,6 +318,189 @@ export const TransactionListScreen: React.FC = () => {
         const minutes = date.getMinutes().toString().padStart(2, '0');
         return `${hours}:${minutes}`;
     };
+
+    // ========== 月份切换 ==========
+    const goToPreviousMonth = () => {
+        setSelectedMonth(prevMonth => {
+            const newMonth = new Date(prevMonth);
+            newMonth.setMonth(newMonth.getMonth() - 1);
+            return newMonth;
+        });
+    };
+
+    const goToNextMonth = () => {
+        setSelectedMonth(prevMonth => {
+            const newMonth = new Date(prevMonth);
+            newMonth.setMonth(newMonth.getMonth() + 1);
+            return newMonth;
+        });
+    };
+
+    // 判断是否是当前月
+    const isCurrentMonth = () => {
+        const now = new Date();
+        return selectedMonth.getFullYear() === now.getFullYear() &&
+               selectedMonth.getMonth() === now.getMonth();
+    };
+
+    // ========== ✨ 新增：月份选择器处理 ==========
+    const handleMonthSelect = (date: Date) => {
+        setSelectedMonth(date);
+    };
+
+    const handleToggleCalendar = () => {
+        setCalendarVisible(!calendarVisible);
+    };
+
+    // ========== 月份选择器手势识别 ==========
+    const monthPanResponder = useMemo(
+        () =>
+            PanResponder.create({
+                onStartShouldSetPanResponder: () => true,
+                onMoveShouldSetPanResponder: (_, gestureState) => {
+                    // 只有当水平滑动距离大于垂直滑动距离时才响应
+                    return Math.abs(gestureState.dx) > Math.abs(gestureState.dy);
+                },
+                onPanResponderRelease: (_, gestureState) => {
+                    // 判断滑动方向和距离
+                    const swipeThreshold = 50; // 最小滑动距离
+                    if (Math.abs(gestureState.dx) > swipeThreshold) {
+                        if (gestureState.dx > 0) {
+                            // 向右滑动 -> 上个月
+                            goToPreviousMonth();
+                        } else if (gestureState.dx < 0 && !isCurrentMonth()) {
+                            // 向左滑动 -> 下个月（但不能超过当前月）
+                            goToNextMonth();
+                        }
+                    }
+                },
+            }),
+        [selectedMonth]
+    );
+
+    // ========== 排序处理 ==========
+    const handleSortChange = (option: SortOption) => {
+        setSortField(option.field);
+        setSortDirection(option.direction);
+        setSortSheetVisible(false);
+    };
+
+    // 获取当前排序选项
+    const getCurrentSortOption = (): SortOption => {
+        return SORT_OPTIONS.find(
+            opt => opt.field === sortField && opt.direction === sortDirection
+        ) || SORT_OPTIONS[0];
+    };
+
+    // ========== 分组处理 ==========
+    const handleGroupByChange = (option: GroupByOption) => {
+        setGroupBy(option.type);
+        setGroupSheetVisible(false);
+    };
+
+    // 获取当前分组选项
+    const getCurrentGroupByOption = (): GroupByOption => {
+        return GROUP_BY_OPTIONS.find(opt => opt.type === groupBy) || GROUP_BY_OPTIONS[0];
+    };
+
+    // 分组数据处理
+    const groupTransactions = (transactions: Transaction[]): TransactionGroup[] => {
+        if (groupBy === 'none') {
+            return [];
+        }
+
+        const groupMap = new Map<string, TransactionGroup>();
+
+        transactions.forEach(transaction => {
+            let groupKey: string;
+            let groupTitle: string;
+            let groupIcon: string;
+
+            switch (groupBy) {
+                case 'category': {
+                    // 按分类分组
+                    const category = getCategoryById(transaction.categoryId);
+                    if (!category) return;
+                    groupKey = String(transaction.categoryId);
+                    groupTitle = category.name;
+                    groupIcon = category.icon;
+                    break;
+                }
+                case 'amount': {
+                    // 按金额区间分组
+                    const range = AMOUNT_RANGES.find(
+                        r => transaction.amount >= r.min && transaction.amount < r.max
+                    ) || AMOUNT_RANGES[AMOUNT_RANGES.length - 1];
+                    groupKey = `${range.min}-${range.max}`;
+                    groupTitle = range.label;
+                    groupIcon = range.icon;
+                    break;
+                }
+                case 'creator': {
+                    // 按创建人分组
+                    const userId = transaction.createdByUserId || 0;
+                    groupKey = String(userId);
+                    groupTitle = userId === 0 ? '未知用户' : `用户 ${userId}`;
+                    groupIcon = 'person';
+                    break;
+                }
+                default:
+                    return;
+            }
+
+            if (!groupMap.has(groupKey)) {
+                groupMap.set(groupKey, {
+                    key: groupKey,
+                    title: groupTitle,
+                    icon: groupIcon,
+                    transactions: [],
+                    totalAmount: 0,
+                    count: 0,
+                });
+            }
+
+            const group = groupMap.get(groupKey)!;
+            group.transactions.push(transaction);
+            group.totalAmount += transaction.amount;
+            group.count += 1;
+        });
+
+        // 转换为数组并排序（按总金额降序）
+        return Array.from(groupMap.values()).sort((a, b) => b.totalAmount - a.totalAmount);
+    };
+
+    // 获取分组后的数据
+    const groupedTransactions = useMemo(() => {
+        return groupTransactions(transactions);
+    }, [transactions, groupBy, categories]);
+
+    // ========== ✨ 新增：计算每日统计数据（用于热力图） ==========
+    const dailyStatistics = useMemo(() => {
+        const statsMap = new Map<string, { income: number; expense: number; count: number }>();
+
+        transactions.forEach(transaction => {
+            // 格式化日期为 YYYY-MM-DD
+            const date = new Date(transaction.transactionDateTime);
+            const dateKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+            if (!statsMap.has(dateKey)) {
+                statsMap.set(dateKey, { income: 0, expense: 0, count: 0 });
+            }
+
+            const stat = statsMap.get(dateKey)!;
+            if (transaction.type === 'INCOME') {
+                stat.income += transaction.amount;
+            } else {
+                stat.expense += transaction.amount;
+            }
+            stat.count += 1;
+        });
+
+        return Array.from(statsMap.entries()).map(([date, stat]) => ({
+            date,
+            ...stat,
+        }));
+    }, [transactions]);
 
     // ========== 长按处理 ==========
     const handleLongPress = (item: Transaction) => {
@@ -242,6 +558,20 @@ export const TransactionListScreen: React.FC = () => {
     }, [ledgers, filterLedger, currentLedger]);
 
     // ========== 渲染列表项 ==========
+    // 渲染分组标题
+    const renderGroupHeader = (group: TransactionGroup) => (
+        <View style={styles.groupHeader}>
+            <View style={styles.groupHeaderLeft}>
+                <Icon name={group.icon as any} size={20} color={Colors.text} />
+                <Text style={styles.groupHeaderTitle}>{group.title}</Text>
+                <Text style={styles.groupHeaderCount}>({group.count}笔)</Text>
+            </View>
+            <Text style={styles.groupHeaderAmount}>
+                ¥{group.totalAmount.toFixed(2)}
+            </Text>
+        </View>
+    );
+
     const renderTransactionItem = ({ item }: { item: Transaction }) => {
         // 根据 categoryId 获取完整的 category 对象
         const category = getCategoryById(item.categoryId);
@@ -256,109 +586,112 @@ export const TransactionListScreen: React.FC = () => {
         // 是否显示账本标签（仅在查看全部账本且有多个账本时显示）
         const shouldShowLedger = !filterLedger && ledgers.length > 1;
 
-        return (<TouchableOpacity 
-            activeOpacity={0.7} 
-            onPress={() => handleItemPress(item)}
-            onLongPress={() => handleLongPress(item)}
-            delayLongPress={250}
-        >
-            <Card style={styles.transactionCard}>
-                <View style={styles.transactionRow}>
-                    {/* 左侧：图标和信息 */}
-                    <View style={styles.leftSection}>
-                        <View
-                            style={[
-                                styles.iconContainer,
-                                { backgroundColor: category.color + '20' },
-                            ]}
-                        >
-                            <Text style={styles.categoryIcon}>{category.icon}</Text>
-                        </View>
-                        <View style={styles.infoContainer}>
-                            {/* 分类名称和账本标签 */}
-                            <View style={styles.categoryRow}>
-                                <Text style={styles.categoryName}>{category.name}</Text>
-                                {shouldShowLedger && (
-                                    <>
-                                        {ledger ? (
-                                            // 有账本：显示账本标签
-                                            <View style={styles.ledgerBadge}>
-                                                <Text style={styles.ledgerBadgeIcon}>
-                                                    {getLedgerIcon(ledger.type)}
-                                                </Text>
-                                                <Text style={styles.ledgerBadgeText} numberOfLines={1}>
-                                                    {ledger.name}
-                                                </Text>
-                                            </View>
-                                        ) : (
-                                            // 无账本：显示通用标签（中性样式）
-                                            <View style={styles.unassignedBadge}>
-                                                <Text style={styles.unassignedBadgeText}>
-                                                    默认账本
-                                                </Text>
-                                            </View>
-                                        )}
-                                    </>
-                                )}
-                            </View>
-                            <View style={styles.timeRow}>
-                                <Text style={styles.dateText}>{formatDate(item.transactionDateTime)}</Text>
-                                <Text style={styles.timeText}>{formatTime(item.transactionDateTime)}</Text>
-                            </View>
-                            {item.description && (
-                                <Text style={styles.description} numberOfLines={1}>
-                                    {item.description}
-                                </Text>
-                            )}
-                        </View>
-                    </View>
+        // ========== ✨ 新增：判断是否显示创建人（共享账本才显示）==========
+        const shouldShowCreator = ledger?.type === 2; // LedgerType.SHARED = 2
+        // 优先显示昵称，其次用户名，最后显示用户ID
+        const creatorName = item.createdByUserNickname || item.createdByUserName || `用户${item.createdByUserId || '未知'}`;
 
-                    {/* 右侧：金额 */}
-                    <View style={styles.rightSection}>
-                        <Text
-                            style={[
-                                styles.amount,
-                                item.type === 'EXPENSE'
-                                    ? styles.amountExpense
-                                    : styles.amountIncome,
-                            ]}
-                        >
-                            {item.type === 'EXPENSE' ? '-' : '+'}¥{item.amount.toFixed(2)}
-                        </Text>
+        return (
+            <Pressable
+                onPress={() => handleItemPress(item)}
+                onLongPress={() => handleLongPress(item)}
+                delayLongPress={250}
+                style={({ pressed }) => [
+                    styles.transactionCardWrapper,
+                    pressed && styles.transactionCardPressed
+                ]}
+            >
+                <Card variant="flat" style={styles.transactionCard}>
+                    <View style={styles.transactionRow}>
+                        {/* 左侧：图标和信息 */}
+                        <View style={styles.leftSection}>
+                            <View
+                                style={[
+                                    styles.iconContainer,
+                                    { backgroundColor: category.color + '20' },
+                                ]}
+                            >
+                                <CategoryIcon icon={category.icon} size={24} color={category.color} />
+                            </View>
+                            <View style={styles.infoContainer}>
+                                {/* 第一行：主标题（固定高度） */}
+                                <View style={styles.titleRow}>
+                                    <Text style={styles.categoryName} numberOfLines={1}>
+                                        {item.description || category.name}
+                                    </Text>
+                                </View>
+                                
+                                {/* 第二行：元信息（固定高度，绝对定位的元素） */}
+                                <View style={styles.metaRowContainer}>
+                                    {/* 左侧：分类和时间（总是显示） */}
+                                    <View style={styles.metaRowLeft}>
+                                        {item.description && (
+                                            <>
+                                                <Text style={styles.metaText}>{category.name}</Text>
+                                                <Text style={styles.metaDivider}> · </Text>
+                                            </>
+                                        )}
+                                        <Text style={styles.metaText}>{formatDate(item.transactionDateTime)}</Text>
+                                        {shouldShowCreator && (
+                                            <>
+                                                <Text style={styles.metaDivider}> · </Text>
+                                                <Text style={styles.creatorText}>{creatorName}</Text>
+                                            </>
+                                        )}
+                                    </View>
+                                    
+                                    {/* 右侧：账本标签（绝对定位，不影响左侧内容） */}
+                                    {shouldShowLedger && (
+                                        <View style={styles.metaRowRight}>
+                                            {ledger ? (
+                                                <View style={styles.ledgerBadge}>
+                                                    <Icon 
+                                                        name={getLedgerIcon(ledger.type) as any} 
+                                                        size={9} 
+                                                        color={Colors.primary}
+                                                        style={styles.ledgerBadgeIcon}
+                                                    />
+                                                    <Text style={styles.ledgerBadgeText} numberOfLines={1}>
+                                                        {ledger.name}
+                                                    </Text>
+                                                </View>
+                                            ) : (
+                                                <View style={styles.unassignedBadge}>
+                                                    <Text style={styles.unassignedBadgeText}>
+                                                        默认账本
+                                                    </Text>
+                                                </View>
+                                            )}
+                                        </View>
+                                    )}
+                                </View>
+                            </View>
+                        </View>
+
+                        {/* 右侧：金额 */}
+                        <View style={styles.rightSection}>
+                            <Text
+                                style={[
+                                    styles.amount,
+                                    item.type === 'EXPENSE'
+                                        ? styles.amountExpense
+                                        : styles.amountIncome,
+                                ]}
+                            >
+                                {item.type === 'EXPENSE' ? '-' : '+'}¥{item.amount.toFixed(2)}
+                            </Text>
+                        </View>
                     </View>
-                </View>
-            </Card>
-        </TouchableOpacity>);
+                </Card>
+            </Pressable>
+        );
     };
 
     // ========== 点击处理 ==========
     const handleItemPress = (item: Transaction) => {
-        setSelectedTransaction(item);
-        setDetailSheetVisible(true);
-    };
-
-    // 关闭详情页
-    const handleCloseDetailSheet = () => {
-        setDetailSheetVisible(false);
-        setSelectedTransaction(null);
-    };
-
-    // 编辑交易
-    const handleEditTransaction = (item: Transaction) => {
-        // TODO: 导航到编辑页
-        console.log('编辑交易:', item);
-        toast.info('编辑功能开发中...');
-    };
-
-    // 删除交易
-    const handleDeleteTransaction = async (item: Transaction) => {
-        try {
-            await transactionAPI.delete(item.id);
-            toast.success('删除成功');
-            await loadTransactions();
-        } catch (error) {
-            console.error('删除交易失败:', error);
-            toast.error('删除失败，请稍后重试');
+        const parent = navigation.getParent();
+        if (parent) {
+            parent.navigate('AddTransaction', { transaction: item });
         }
     };
 
@@ -388,7 +721,7 @@ export const TransactionListScreen: React.FC = () => {
     // ========== 空状态 ==========
     const renderEmpty = () => (
         <View style={styles.emptyContainer}>
-            <Text style={styles.emptyIcon}>📝</Text>
+            <Icon name="document-text-outline" size={64} color={Colors.textLight} />
             <Text style={styles.emptyText}>暂无记账记录</Text>
             <Text style={styles.emptyHint}>点击下方按钮开始记账吧</Text>
         </View>
@@ -397,29 +730,85 @@ export const TransactionListScreen: React.FC = () => {
     // ========== 渲染列表头部 ==========
     const renderHeader = () => (
         <>
-            {/* 统计卡片 */}
+            {/* 统计卡片 - 根据筛选条件自适应显示 */}
             <Card style={styles.statsCard}>
-                <View style={styles.statsRow}>
-                    <View style={styles.statItem}>
-                        <Text style={styles.statLabel}>总支出</Text>
-                        <Text style={[styles.statValue, styles.statValueExpense]}>
+                {/* 月份选择器 - ✨ 可点击打开月份选择抽屉 */}
+                <View style={styles.monthSelector} {...monthPanResponder.panHandlers}>
+                    <TouchableOpacity
+                        style={styles.monthArrow}
+                        onPress={goToPreviousMonth}
+                        activeOpacity={0.7}
+                    >
+                        <Text style={styles.monthArrowText}>◀</Text>
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity
+                        style={styles.monthTitleContainer}
+                        onPress={() => setMonthPickerVisible(true)}
+                        activeOpacity={0.7}
+                    >
+                        <Text style={styles.monthTitle}>{formatMonthTitle(selectedMonth)}</Text>
+                        <Icon name="chevron-down" size={18} color={Colors.primary} />
+                        {isCurrentMonth() && (
+                            <View style={styles.currentMonthBadge}>
+                                <Text style={styles.currentMonthBadgeText}>本月</Text>
+                            </View>
+                        )}
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity
+                        style={[styles.monthArrow, isCurrentMonth() && styles.monthArrowDisabled]}
+                        onPress={goToNextMonth}
+                        activeOpacity={0.7}
+                        disabled={isCurrentMonth()}
+                    >
+                        <Text style={[styles.monthArrowText, isCurrentMonth() && styles.monthArrowTextDisabled]}>▶</Text>
+                    </TouchableOpacity>
+                </View>
+
+                {/* 统计数据 */}
+                {filterType === 'ALL' ? (
+                    // 全部：显示支出、收入和结余
+                    <>
+                        <View style={styles.statsRow}>
+                            <View style={styles.statItem}>
+                                <Text style={styles.statLabel}>总支出</Text>
+                                <Text style={[styles.statValue, styles.statValueExpense]}>
+                                    ¥{statistics.totalExpense.toFixed(2)}
+                                </Text>
+                            </View>
+                            <View style={styles.statDivider} />
+                            <View style={styles.statItem}>
+                                <Text style={styles.statLabel}>总收入</Text>
+                                <Text style={[styles.statValue, styles.statValueIncome]}>
+                                    ¥{statistics.totalIncome.toFixed(2)}
+                                </Text>
+                            </View>
+                        </View>
+                        <View style={styles.balanceRow}>
+                            <Text style={styles.balanceLabel}>结余</Text>
+                            <Text style={styles.balanceValue}>
+                                ¥{(statistics.totalIncome - statistics.totalExpense).toFixed(2)}
+                            </Text>
+                        </View>
+                    </>
+                ) : filterType === 'EXPENSE' ? (
+                    // 支出：只显示总支出（大号居中）
+                    <View style={styles.singleStatContainer}>
+                        <Text style={styles.singleStatLabel}>总支出</Text>
+                        <Text style={[styles.singleStatValue, styles.statValueExpense]}>
                             ¥{statistics.totalExpense.toFixed(2)}
                         </Text>
                     </View>
-                    <View style={styles.statDivider} />
-                    <View style={styles.statItem}>
-                        <Text style={styles.statLabel}>总收入</Text>
-                        <Text style={[styles.statValue, styles.statValueIncome]}>
+                ) : (
+                    // 收入：只显示总收入（大号居中）
+                    <View style={styles.singleStatContainer}>
+                        <Text style={styles.singleStatLabel}>总收入</Text>
+                        <Text style={[styles.singleStatValue, styles.statValueIncome]}>
                             ¥{statistics.totalIncome.toFixed(2)}
                         </Text>
                     </View>
-                </View>
-                <View style={styles.balanceRow}>
-                    <Text style={styles.balanceLabel}>结余</Text>
-                    <Text style={styles.balanceValue}>
-                        ¥{(statistics.totalIncome - statistics.totalExpense).toFixed(2)}
-                    </Text>
-                </View>
+                )}
             </Card>
 
             {/* 筛选器 */}
@@ -448,14 +837,21 @@ export const TransactionListScreen: React.FC = () => {
                     ]}
                     onPress={() => setFilterType('EXPENSE')}
                 >
-                    <Text
-                        style={[
-                            styles.filterButtonText,
-                            filterType === 'EXPENSE' && styles.filterButtonTextActive,
-                        ]}
-                    >
-                        💸 支出
-                    </Text>
+                    <View style={styles.filterButtonContent}>
+                        <Icon 
+                            name="trending-down" 
+                            size={16} 
+                            color={filterType === 'EXPENSE' ? Colors.surface : Colors.textSecondary} 
+                        />
+                        <Text
+                            style={[
+                                styles.filterButtonText,
+                                filterType === 'EXPENSE' && styles.filterButtonTextActive,
+                            ]}
+                        >
+                            支出
+                        </Text>
+                    </View>
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -465,26 +861,90 @@ export const TransactionListScreen: React.FC = () => {
                     ]}
                     onPress={() => setFilterType('INCOME')}
                 >
-                    <Text
-                        style={[
-                            styles.filterButtonText,
-                            filterType === 'INCOME' && styles.filterButtonTextActive,
-                        ]}
-                    >
-                        💰 收入
-                    </Text>
+                    <View style={styles.filterButtonContent}>
+                        <Icon 
+                            name="trending-up" 
+                            size={16} 
+                            color={filterType === 'INCOME' ? Colors.surface : Colors.textSecondary} 
+                        />
+                        <Text
+                            style={[
+                                styles.filterButtonText,
+                                filterType === 'INCOME' && styles.filterButtonTextActive,
+                            ]}
+                        >
+                            收入
+                        </Text>
+                    </View>
                 </TouchableOpacity>
             </View>
 
-            {/* 列表标题 */}
-            <Text style={styles.listTitle}>
-                {filterType === 'ALL'
-                    ? '所有记录'
-                    : filterType === 'EXPENSE'
-                        ? '支出记录'
-                        : '收入记录'}
-                <Text style={styles.listCount}> ({totalElements})</Text>
-            </Text>
+            {/* ========== ✨ 新增：日历热力图 ========== */}
+            <DailyStatisticsCalendar
+                selectedMonth={selectedMonth}
+                statistics={dailyStatistics}
+                visible={calendarVisible}
+                onDayPress={(date) => {
+                    // 点击某一天，可以滚动到对应日期的交易
+                    console.log('点击日期:', date);
+                }}
+            />
+
+            {/* 日历显示/隐藏切换按钮 */}
+            <TouchableOpacity
+                style={styles.calendarToggle}
+                onPress={handleToggleCalendar}
+                activeOpacity={0.7}
+            >
+                <Icon
+                    name={calendarVisible ? 'chevron-up' : 'chevron-down'}
+                    size={16}
+                    color={Colors.primary}
+                />
+                <Text style={styles.calendarToggleText}>
+                    {calendarVisible ? '收起热力图' : '展开热力图'}
+                </Text>
+            </TouchableOpacity>
+
+            {/* 列表标题和操作按钮 */}
+            <View style={styles.listHeader}>
+                <Text style={styles.listTitle}>
+                    {filterType === 'ALL'
+                        ? '所有记录'
+                        : filterType === 'EXPENSE'
+                            ? '支出记录'
+                            : '收入记录'}
+                    <Text style={styles.listCount}> ({totalElements})</Text>
+                </Text>
+                
+                <View style={styles.listActions}>
+                    {/* 分组按钮 */}
+                    <TouchableOpacity
+                        style={[styles.actionButton, groupBy !== 'none' && styles.actionButtonActive]}
+                        onPress={() => setGroupSheetVisible(true)}
+                        activeOpacity={0.7}
+                    >
+                        <Icon name={getCurrentGroupByOption().icon as any} size={16} color={Colors.primary} />
+                        {groupBy !== 'none' && (
+                            <Text style={styles.actionButtonText}>{getCurrentGroupByOption().label}</Text>
+                        )}
+                        <Text style={styles.actionButtonArrow}>▼</Text>
+                    </TouchableOpacity>
+                    
+                    {/* 排序按钮 */}
+                    <TouchableOpacity
+                        style={[
+                            styles.actionButton,
+                            (sortField !== 'transactionDateTime' || sortDirection !== 'DESC') && styles.actionButtonActive
+                        ]}
+                        onPress={() => setSortSheetVisible(true)}
+                        activeOpacity={0.7}
+                    >
+                        <Icon name={getCurrentSortOption().icon as any} size={16} color={Colors.primary} />
+                        <Text style={styles.actionButtonArrow}>▼</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
         </>
     );
 
@@ -492,50 +952,83 @@ export const TransactionListScreen: React.FC = () => {
     return (
         <>
             <SafeAreaView style={styles.safeArea} edges={['top']}>
-            <View style={styles.container}>
-                {/* 头部 - 账本选择器 */}
-                <View style={styles.header}>
-                    {ledgers.length > 1 ? (
-                        <LedgerSelector
-                            ledgers={ledgers}
-                            currentLedger={filterLedger}
-                            onSelect={(ledger) => setFilterLedger(ledger)}
-                            mode="dropdown"
-                            showAllOption={true}
+                <View style={styles.container}>
+                    {/* 头部 - 账本选择器 */}
+                    <View style={styles.header}>
+                        {ledgers.length > 1 ? (
+                            <LedgerSelector
+                                ledgers={ledgers}
+                                currentLedger={filterLedger}
+                                onSelect={(ledger) => setFilterLedger(ledger)}
+                                mode="dropdown"
+                                showAllOption={true}
+                            />
+                        ) : (
+                            <Text style={styles.headerTitle}>
+                                {ledgers.length === 1 ? ledgers[0].name : '我的账本'}
+                            </Text>
+                        )}
+                    </View>
+
+                    {/* 列表 */}
+                    {groupBy === 'none' ? (
+                        // 不分组：平铺显示
+                        <FlatList
+                            data={filteredTransactions}
+                            renderItem={renderTransactionItem}
+                            keyExtractor={item => String(item.id)}
+                            ListHeaderComponent={renderHeader}
+                            ListEmptyComponent={renderEmpty}
+                            contentContainerStyle={styles.listContent}
+                            showsVerticalScrollIndicator={false}
+                            refreshControl={
+                                <RefreshControl
+                                    refreshing={isRefreshing}
+                                    onRefresh={onRefresh}
+                                    tintColor={Colors.primary}
+                                />
+                            }
                         />
                     ) : (
-                        <Text style={styles.headerTitle}>
-                            {ledgers.length === 1 ? ledgers[0].name : '我的账本'}
-                        </Text>
-                    )}
-                </View>
-
-                {/* 列表 */}
-                <FlatList
-                    data={filteredTransactions}
-                    renderItem={renderTransactionItem}
-                    keyExtractor={item => String(item.id)}
-                    ListHeaderComponent={renderHeader}
-                    ListEmptyComponent={renderEmpty}
-                    contentContainerStyle={styles.listContent}
-                    showsVerticalScrollIndicator={false}
-                    refreshControl={
-                        <RefreshControl
-                            refreshing={isRefreshing}
-                            onRefresh={onRefresh}
-                            tintColor={Colors.primary}
+                        // 分组显示
+                        <FlatList
+                            data={groupedTransactions}
+                            renderItem={({ item: group }) => (
+                                <View key={group.key}>
+                                    {renderGroupHeader(group)}
+                                    {group.transactions.map(transaction => (
+                                        <View key={transaction.id}>
+                                            {renderTransactionItem({ item: transaction })}
+                                        </View>
+                                    ))}
+                                </View>
+                            )}
+                            keyExtractor={item => item.key}
+                            ListHeaderComponent={renderHeader}
+                            ListEmptyComponent={renderEmpty}
+                            contentContainerStyle={styles.listContent}
+                            showsVerticalScrollIndicator={false}
+                            refreshControl={
+                                <RefreshControl
+                                    refreshing={isRefreshing}
+                                    onRefresh={onRefresh}
+                                    tintColor={Colors.primary}
+                                />
+                            }
                         />
-                    }
-                />
+                    )}
 
-                {/* 悬浮添加按钮 */}
-                <TouchableOpacity
-                    style={styles.fab}
-                    onPress={navigateToAddTransaction}
-                    activeOpacity={0.8}
-                >
-                    <Text style={styles.fabIcon}>+</Text>
-                </TouchableOpacity>
+                    {/* 悬浮添加按钮 */}
+                    <TouchableOpacity
+                        style={[
+                            styles.fab,
+                            { bottom: Spacing.xl + insets.bottom }
+                        ]}
+                        onPress={navigateToAddTransaction}
+                        activeOpacity={0.8}
+                    >
+                        <Icon name="add" size={32} color={Colors.surface} />
+                    </TouchableOpacity>
                 </View>
             </SafeAreaView>
 
@@ -553,15 +1046,144 @@ export const TransactionListScreen: React.FC = () => {
                 loadingLedgerId={movingLedgerId}
             />
 
-            <TransactionDetailSheet
-                visible={detailSheetVisible}
-                transaction={selectedTransaction}
-                category={selectedTransaction ? getCategoryById(selectedTransaction.categoryId) : undefined}
-                ledger={selectedTransaction?.ledgerId ? getLedgerById(selectedTransaction.ledgerId) : undefined}
-                onClose={handleCloseDetailSheet}
-                onEdit={handleEditTransaction}
-                onDelete={handleDeleteTransaction}
+            {/* ========== ✨ 新增：月份选择器抽屉 ========== */}
+            <MonthPickerSheet
+                visible={monthPickerVisible}
+                selectedDate={selectedMonth}
+                onClose={() => setMonthPickerVisible(false)}
+                onSelectMonth={handleMonthSelect}
             />
+
+            {/* 排序选择抽屉 */}
+            <Modal
+                visible={sortSheetVisible}
+                transparent
+                animationType="slide"
+                onRequestClose={() => setSortSheetVisible(false)}
+            >
+                <Pressable
+                    style={styles.modalOverlay}
+                    onPress={() => setSortSheetVisible(false)}
+                >
+                    <Pressable onPress={(e) => e.stopPropagation()}>
+                        <View style={styles.sortSheet}>
+                            {/* 把手 */}
+                            <View style={styles.sheetHandle} />
+
+                            {/* 标题 */}
+                            <View style={styles.sheetHeader}>
+                                <Text style={styles.sheetTitle}>选择排序方式</Text>
+                                <TouchableOpacity
+                                    style={styles.sheetCloseButton}
+                                    onPress={() => setSortSheetVisible(false)}
+                                    activeOpacity={0.7}
+                                >
+                                    <Icon name="close" size={20} color={Colors.textSecondary} />
+                                </TouchableOpacity>
+                            </View>
+
+                            {/* 排序选项 */}
+                            <View style={styles.sortOptions}>
+                                {SORT_OPTIONS.map((option, index) => {
+                                    const isSelected = option.field === sortField && option.direction === sortDirection;
+                                    return (
+                                        <TouchableOpacity
+                                            key={index}
+                                            style={[
+                                                styles.sortOption,
+                                                isSelected && styles.sortOptionSelected
+                                            ]}
+                                            onPress={() => handleSortChange(option)}
+                                            activeOpacity={0.7}
+                                        >
+                                            <View style={styles.sortOptionLeft}>
+                                                <Icon name={option.icon as any} size={20} color={isSelected ? Colors.primary : Colors.text} />
+                                                <Text style={[
+                                                    styles.sortOptionText,
+                                                    isSelected && styles.sortOptionTextSelected
+                                                ]}>
+                                                    {option.label}
+                                                </Text>
+                                            </View>
+                                            {isSelected && (
+                                                <Icon name="checkmark" size={20} color={Colors.primary} />
+                                            )}
+                                        </TouchableOpacity>
+                                    );
+                                })}
+                            </View>
+                        </View>
+                    </Pressable>
+                </Pressable>
+            </Modal>
+
+            {/* 分组选择抽屉 */}
+            <Modal
+                visible={groupSheetVisible}
+                transparent
+                animationType="slide"
+                onRequestClose={() => setGroupSheetVisible(false)}
+            >
+                <Pressable
+                    style={styles.modalOverlay}
+                    onPress={() => setGroupSheetVisible(false)}
+                >
+                    <Pressable onPress={(e) => e.stopPropagation()}>
+                        <View style={styles.sortSheet}>
+                            {/* 把手 */}
+                            <View style={styles.sheetHandle} />
+
+                            {/* 标题 */}
+                            <View style={styles.sheetHeader}>
+                                <Text style={styles.sheetTitle}>选择分组方式</Text>
+                                <TouchableOpacity
+                                    style={styles.sheetCloseButton}
+                                    onPress={() => setGroupSheetVisible(false)}
+                                    activeOpacity={0.7}
+                                >
+                                    <Icon name="close" size={20} color={Colors.textSecondary} />
+                                </TouchableOpacity>
+                            </View>
+
+                            {/* 分组选项 */}
+                            <View style={styles.sortOptions}>
+                                {GROUP_BY_OPTIONS.map((option) => {
+                                    const isSelected = option.type === groupBy;
+                                    return (
+                                        <TouchableOpacity
+                                            key={option.type}
+                                            style={[
+                                                styles.sortOption,
+                                                isSelected && styles.sortOptionSelected
+                                            ]}
+                                            onPress={() => handleGroupByChange(option)}
+                                            activeOpacity={0.7}
+                                        >
+                                            <View style={styles.sortOptionLeft}>
+                                                <Icon name={option.icon as any} size={20} color={isSelected ? Colors.primary : Colors.text} />
+                                                <View style={styles.groupOptionTextContainer}>
+                                                    <Text style={[
+                                                        styles.sortOptionText,
+                                                        isSelected && styles.sortOptionTextSelected
+                                                    ]}>
+                                                        {option.label}
+                                                    </Text>
+                                                    <Text style={styles.groupOptionDescription}>
+                                                        {option.description}
+                                                    </Text>
+                                                </View>
+                                            </View>
+                                            {isSelected && (
+                                                <Icon name="checkmark" size={20} color={Colors.primary} />
+                                            )}
+                                        </TouchableOpacity>
+                                    );
+                                })}
+                            </View>
+                        </View>
+                    </Pressable>
+                </Pressable>
+            </Modal>
         </>
     );
 };
@@ -593,13 +1215,64 @@ const styles = StyleSheet.create({
     // 列表
     listContent: {
         padding: Spacing.md,
-        paddingBottom: 100, // 为悬浮按钮留出空间
+        paddingBottom: 120, // 为悬浮按钮留出空间（增加到 120）
     },
 
     // 统计卡片
     statsCard: {
         marginBottom: Spacing.md,
-        padding: Spacing.lg,
+        paddingVertical: Spacing.lg,
+        paddingHorizontal: Spacing.lg,
+    },
+    // 月份选择器
+    monthSelector: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: Spacing.md,
+        paddingBottom: Spacing.md,
+        borderBottomWidth: 1,
+        borderBottomColor: Colors.border + '20',
+    },
+    monthArrow: {
+        width: 36,
+        height: 36,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderRadius: 18,
+        backgroundColor: Colors.background,
+    },
+    monthArrowDisabled: {
+        opacity: 0.3,
+    },
+    monthArrowText: {
+        fontSize: 14,
+        color: Colors.primary,
+        fontWeight: FontWeights.bold,
+    },
+    monthArrowTextDisabled: {
+        color: Colors.textLight,
+    },
+    monthTitleContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.xs,
+    },
+    monthTitle: {
+        fontSize: FontSizes.xl,
+        fontWeight: FontWeights.bold,
+        color: Colors.text,
+    },
+    currentMonthBadge: {
+        backgroundColor: Colors.primary + '15',
+        paddingHorizontal: Spacing.sm,
+        paddingVertical: 3,
+        borderRadius: BorderRadius.md,
+    },
+    currentMonthBadgeText: {
+        fontSize: 11,
+        color: Colors.primary,
+        fontWeight: FontWeights.semibold,
     },
     statsRow: {
         flexDirection: 'row',
@@ -647,6 +1320,28 @@ const styles = StyleSheet.create({
         fontWeight: FontWeights.bold,
         color: Colors.primary,
     },
+    // 单项统计样式（支出或收入筛选时使用）
+    singleStatContainer: {
+        alignItems: 'center',
+        paddingVertical: Spacing.xs,
+    },
+    singleStatLabel: {
+        fontSize: FontSizes.sm,
+        color: Colors.textSecondary,
+        marginBottom: Spacing.xs,
+        fontWeight: FontWeights.medium,
+    },
+    singleStatValue: {
+        fontSize: 40,
+        fontWeight: FontWeights.bold,
+        marginBottom: Spacing.xs,
+        lineHeight: 48,
+    },
+    singleStatCount: {
+        fontSize: FontSizes.xs,
+        color: Colors.textLight,
+        fontWeight: FontWeights.regular,
+    },
 
     // 筛选器
     filterContainer: {
@@ -661,10 +1356,16 @@ const styles = StyleSheet.create({
         borderRadius: BorderRadius.lg,
         backgroundColor: Colors.surface,
         alignItems: 'center',
+        justifyContent: 'center',
         ...Shadows.sm,
     },
     filterButtonActive: {
         backgroundColor: Colors.primary,
+    },
+    filterButtonContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
     },
     filterButtonText: {
         fontSize: FontSizes.md,
@@ -676,22 +1377,114 @@ const styles = StyleSheet.create({
     },
 
     // 列表标题
+    listHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: Spacing.md,
+    },
     listTitle: {
         fontSize: FontSizes.lg,
         fontWeight: FontWeights.semibold,
         color: Colors.text,
-        marginBottom: Spacing.md,
     },
     listCount: {
         fontSize: FontSizes.md,
         color: Colors.textSecondary,
         fontWeight: FontWeights.regular,
     },
+    // 操作按钮容器
+    listActions: {
+        flexDirection: 'row',
+        gap: Spacing.xs,
+    },
+    // 通用操作按钮（分组、排序）
+    actionButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: Spacing.xs,
+        paddingHorizontal: Spacing.sm,
+        backgroundColor: Colors.surface,
+        borderRadius: BorderRadius.lg,
+        borderWidth: 1,
+        borderColor: 'transparent',
+        gap: 4,
+        ...Shadows.sm,
+    },
+    actionButtonActive: {
+        backgroundColor: Colors.surface,
+        borderColor: Colors.primary,
+        borderWidth: 1.5,
+    },
+    actionButtonIcon: {
+        fontSize: 16,
+    },
+    actionButtonText: {
+        fontSize: FontSizes.sm,
+        color: Colors.primary,
+        fontWeight: FontWeights.semibold,
+    },
+    actionButtonArrow: {
+        fontSize: 10,
+        color: Colors.textLight,
+        marginLeft: 2,
+    },
 
-    // 交易卡片
+    // 分组标题
+    groupHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: Spacing.sm,
+        paddingHorizontal: Spacing.md,
+        marginTop: Spacing.md,
+        marginBottom: Spacing.xs,
+        backgroundColor: Colors.background,
+        borderRadius: BorderRadius.md,
+    },
+    groupHeaderLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.xs,
+    },
+    groupHeaderIcon: {
+        fontSize: 20,
+    },
+    groupHeaderTitle: {
+        fontSize: FontSizes.md,
+        fontWeight: FontWeights.semibold,
+        color: Colors.text,
+    },
+    groupHeaderCount: {
+        fontSize: FontSizes.sm,
+        color: Colors.textSecondary,
+    },
+    groupHeaderAmount: {
+        fontSize: FontSizes.lg,
+        fontWeight: FontWeights.bold,
+        color: Colors.primary,
+    },
+
+    // 交易卡片 - 优化高度，参考 Google/Telegram 风格
+    transactionCardWrapper: {
+        marginBottom: Spacing.xs,
+    },
+    transactionCardPressed: {
+        opacity: 0.7,
+    },
     transactionCard: {
-        marginBottom: Spacing.sm,
-        padding: Spacing.md,
+        paddingVertical: Spacing.sm,
+        paddingHorizontal: Spacing.md,
+        backgroundColor: Colors.surface,
+        borderRadius: BorderRadius.lg,
+        borderWidth: 1,
+        borderColor: Colors.border + '30',
+        // 使用非常柔和的阴影
+        shadowColor: Colors.shadow,
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.02,
+        shadowRadius: 2,
+        elevation: 1,
     },
     transactionRow: {
         flexDirection: 'row',
@@ -706,94 +1499,116 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     iconContainer: {
-        width: 48,
-        height: 48,
-        borderRadius: BorderRadius.lg,
+        width: 40,
+        height: 40,
+        borderRadius: BorderRadius.md,
         alignItems: 'center',
         justifyContent: 'center',
-        marginRight: Spacing.md,
+        marginRight: Spacing.sm,
     },
     categoryIcon: {
-        fontSize: 24,
+        fontSize: 20,
     },
     infoContainer: {
         flex: 1,
+        justifyContent: 'center',
     },
-    categoryRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: Spacing.xs / 2,
-        gap: Spacing.xs,
+    // 第一行：主标题（固定高度）
+    titleRow: {
+        height: 20,
+        justifyContent: 'center',
+        marginBottom: 4,
     },
     categoryName: {
         fontSize: FontSizes.md,
         fontWeight: FontWeights.semibold,
         color: Colors.text,
+        lineHeight: 20,
+    },
+    // 第二行容器（固定高度）
+    metaRowContainer: {
+        height: 16,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    // 元信息左侧（分类 + 时间 + 创建人）
+    metaRowLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flex: 1,
+        marginRight: Spacing.xs,
+    },
+    // 元信息右侧（账本标签，绝对定位效果）
+    metaRowRight: {
+        flexShrink: 0,
+    },
+    metaText: {
+        fontSize: FontSizes.xs,
+        color: Colors.textSecondary,
+        lineHeight: 16,
+    },
+    metaDivider: {
+        fontSize: FontSizes.xs,
+        color: Colors.textLight,
+        lineHeight: 16,
+    },
+    // 创建人文本样式（低调、不显眼）
+    creatorText: {
+        fontSize: FontSizes.xs,
+        color: Colors.textLight,
+        lineHeight: 16,
+        fontStyle: 'italic',
+        opacity: 0.7,
     },
     // 账本标签样式（参考 Telegram 风格）
     ledgerBadge: {
         flexDirection: 'row',
         alignItems: 'center',
         backgroundColor: Colors.primary + '15',
-        paddingHorizontal: Spacing.xs,
-        paddingVertical: 2,
+        paddingHorizontal: 6,
+        paddingVertical: 1,
         borderRadius: BorderRadius.sm,
         maxWidth: 120,
         borderWidth: 0.5,
         borderColor: Colors.primary + '30',
     },
     ledgerBadgeIcon: {
-        fontSize: 10,
         marginRight: 2,
     },
     ledgerBadgeText: {
-        fontSize: FontSizes.xs,
+        fontSize: 10,
         color: Colors.primary,
         fontWeight: FontWeights.medium,
         flex: 1,
+        lineHeight: 14,
     },
     // 未分配账本标签样式（中性、低调）
     unassignedBadge: {
-        paddingHorizontal: Spacing.xs,
-        paddingVertical: 2,
+        paddingHorizontal: 6,
+        paddingVertical: 1,
         borderRadius: BorderRadius.sm,
         backgroundColor: Colors.backgroundSecondary,
         borderWidth: 0.5,
         borderColor: Colors.border,
     },
     unassignedBadgeText: {
-        fontSize: FontSizes.xs,
+        fontSize: 10,
         color: Colors.textLight,
         fontWeight: FontWeights.regular,
-    },
-    timeRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: Spacing.xs / 2,
-    },
-    dateText: {
-        fontSize: FontSizes.sm,
-        color: Colors.textSecondary,
-        marginRight: Spacing.xs,
-    },
-    timeText: {
-        fontSize: FontSizes.sm,
-        color: Colors.textLight,
-    },
-    description: {
-        fontSize: FontSizes.sm,
-        color: Colors.textLight,
-        marginTop: Spacing.xs / 2,
+        lineHeight: 14,
     },
 
     // 右侧金额
     rightSection: {
         alignItems: 'flex-end',
-        marginLeft: Spacing.md,
+        justifyContent: 'center',
+        marginLeft: Spacing.sm,
     },
     amount: {
         fontSize: FontSizes.lg,
         fontWeight: FontWeights.bold,
+        lineHeight: 24,
     },
     amountExpense: {
         color: Colors.expense,
@@ -827,7 +1642,7 @@ const styles = StyleSheet.create({
     fab: {
         position: 'absolute',
         right: Spacing.lg,
-        bottom: Spacing.xl,
+        // bottom 值通过内联样式动态设置（考虑安全区域）
         width: 60,
         height: 60,
         borderRadius: 30,
@@ -847,5 +1662,118 @@ const styles = StyleSheet.create({
     },
     ledgerFilter: {
         // 继承 LedgerSelector 的样式，无需额外定制
+    },
+
+    // ========== 排序抽屉样式 ==========
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        justifyContent: 'flex-end',
+    },
+    sortSheet: {
+        backgroundColor: Colors.surface,
+        borderTopLeftRadius: BorderRadius.xl,
+        borderTopRightRadius: BorderRadius.xl,
+        paddingBottom: Spacing.xl,
+    },
+    sheetHandle: {
+        width: 40,
+        height: 4,
+        backgroundColor: Colors.border,
+        borderRadius: 2,
+        alignSelf: 'center',
+        marginTop: Spacing.sm,
+        marginBottom: Spacing.md,
+    },
+    sheetHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: Spacing.lg,
+        paddingBottom: Spacing.md,
+        borderBottomWidth: 1,
+        borderBottomColor: Colors.border,
+        marginBottom: Spacing.md,
+    },
+    sheetTitle: {
+        fontSize: FontSizes.lg,
+        fontWeight: FontWeights.bold,
+        color: Colors.text,
+    },
+    sheetCloseButton: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: Colors.backgroundSecondary,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    sheetCloseButtonText: {
+        fontSize: FontSizes.lg,
+        color: Colors.textSecondary,
+        fontWeight: '300',
+    },
+    sortOptions: {
+        paddingHorizontal: Spacing.lg,
+    },
+    sortOption: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: Spacing.md,
+        paddingHorizontal: Spacing.md,
+        borderRadius: BorderRadius.lg,
+        marginBottom: Spacing.xs,
+        backgroundColor: Colors.background,
+    },
+    sortOptionSelected: {
+        backgroundColor: Colors.primary + '10',
+        borderWidth: 1,
+        borderColor: Colors.primary + '30',
+    },
+    sortOptionLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.sm,
+    },
+    sortOptionIcon: {
+        fontSize: 20,
+    },
+    sortOptionText: {
+        fontSize: FontSizes.md,
+        color: Colors.text,
+        fontWeight: FontWeights.medium,
+    },
+    sortOptionTextSelected: {
+        color: Colors.primary,
+        fontWeight: FontWeights.semibold,
+    },
+    sortOptionCheck: {
+        fontSize: FontSizes.lg,
+        color: Colors.primary,
+        fontWeight: FontWeights.bold,
+    },
+    // 分组选项的文本容器
+    groupOptionTextContainer: {
+        flex: 1,
+    },
+    groupOptionDescription: {
+        fontSize: FontSizes.xs,
+        color: Colors.textLight,
+        marginTop: 2,
+    },
+    // ========== ✨ 新增：日历热力图切换按钮样式 ==========
+    calendarToggle: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: Spacing.xs,
+        marginBottom: Spacing.md,
+        gap: Spacing.xs,
+    },
+    calendarToggleText: {
+        fontSize: FontSizes.sm,
+        color: Colors.primary,
+        fontWeight: FontWeights.medium,
     },
 });

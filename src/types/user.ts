@@ -1,10 +1,15 @@
 // 用户类型定义
 export interface User {
+    _id?: string | number;  // 兼容不同的 ID 格式
     userId?: number;  // 服务端返回的是 userId
     id?: string;      // 兼容旧代码
-    username: string;
-    email: string;
-    createdAt: string;
+    username?: string;
+    nickname?: string; // 用户昵称
+    name?: string;    // 用户名称（显示用）
+    email?: string;
+    avatarUrl?: string; // 头像URL
+    avatar?: string;  // 兼容旧代码
+    createdAt?: string;
 }
 
 // 登录请求参数
@@ -24,9 +29,13 @@ export interface RegisterRequest {
 export interface AuthResponse {
     token?: string;  // token可能不存在
     userId?: number;
-    username: string;
-    email: string;
-    createdAt: string;
+    username?: string;
+    nickname?: string; // 用户昵称
+    name?: string;    // 用户名称（显示用）
+    email?: string;
+    avatarUrl?: string;
+    avatar?: string;
+    createdAt?: string;
 }
 
 // 兼容旧的响应格式

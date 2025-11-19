@@ -8,6 +8,7 @@ import {
   Spacing,
   Shadows,
 } from '../../constants/theme';
+import { CategoryIcon } from '../common/CategoryIcon';
 
 interface CategorySelectorProps {
   categories: Category[];
@@ -40,7 +41,11 @@ export const CategorySelector: React.FC<CategorySelectorProps> = ({
             onPress={() => onSelect(category)}
             activeOpacity={0.7}
           >
-            <Text style={styles.categoryIcon}>{category.icon}</Text>
+            <CategoryIcon 
+              icon={category.icon} 
+              size={32} 
+              color={selectedCategory?.id === category.id ? Colors.primary : Colors.text}
+            />
             <Text
               style={[
                 styles.categoryName,

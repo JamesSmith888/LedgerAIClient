@@ -21,6 +21,8 @@ import {
 } from '../constants/theme';
 import { authAPI } from '../api/services';
 import { useAuth } from '../context/AuthContext';
+import { OAuthButtons } from '../components/auth/OAuthButtons';
+import { loginWithAlipay } from '../utils/alipay';
 
 export const LoginScreen: React.FC<{ navigation: any }> = ({ navigation }) => {
   const insets = useSafeAreaInsets();
@@ -68,15 +70,16 @@ export const LoginScreen: React.FC<{ navigation: any }> = ({ navigation }) => {
 
       console.log('登录响应:', response);
 
-      // 构建符合 gifted-chat User 类型的用户对象
+      // 构建符合 User 类型的用户对象
       const user = {
-        _id: response.userId || response.username, // gifted-chat 需要 _id
-        name: response.username,
-        avatar: undefined,
-        // 保留其他字段用于应用内使用
+        _id: response.userId || response.username,
         userId: response.userId,
         username: response.username,
+        nickname: response.nickname, // 添加昵称
+        name: response.nickname || response.username, // 显示用名称优先使用昵称
         email: response.email,
+        avatarUrl: response.avatarUrl,
+        avatar: response.avatarUrl,
         createdAt: response.createdAt,
       };
 
@@ -104,6 +107,61 @@ export const LoginScreen: React.FC<{ navigation: any }> = ({ navigation }) => {
   // 跳转到注册页面
   const goToRegister = () => {
     navigation.navigate('Register');
+  };
+
+  // 支付宝登录
+  const handleAlipayLogin = async () => {
+    try {
+      setIsLoading(true);
+
+      // 1. 调用支付宝 SDK 获取 auth_code
+      const authCode = await loginWithAlipay();
+
+      // 2. 发送到后端
+      const response = await authAPI.oauthLogin({
+        oauthType: 'ALIPAY',
+        code: authCode,
+      });
+
+      console.log('支付宝登录响应:', response);
+
+      // 3. 构建用户对象
+      const user = {
+        _id: response.userId || response.username,
+        userId: response.userId,
+        username: response.username,
+        nickname: response.nickname,
+        name: response.nickname || response.username,
+        email: response.email,
+        avatarUrl: response.avatarUrl,
+        avatar: response.avatarUrl,
+        createdAt: response.createdAt,
+      };
+
+      // 4. 保存登录状态
+      const token = response.token || 'temp-token';
+      await login(user, token);
+
+      toast.success(`欢迎回来，${response.username}！`);
+    } catch (error: any) {
+      console.error('支付宝登录失败:', error);
+
+      // 用户取消不显示错误提示
+      if (error.message === 'USER_CANCEL') {
+        return;
+      }
+
+      let errorMessage = '支付宝登录失败';
+      if (error.message) {
+        errorMessage = error.message;
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message;
+      }
+
+      toast.error(errorMessage, '登录失败');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -158,6 +216,12 @@ export const LoginScreen: React.FC<{ navigation: any }> = ({ navigation }) => {
             style={styles.loginButton}
           />
         </View>
+
+        {/* 第三方登录 */}
+        <OAuthButtons
+          onAlipay={handleAlipayLogin}
+          loading={isLoading}
+        />
 
         {/* 底部链接 */}
         <View style={styles.footer}>

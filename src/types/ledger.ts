@@ -58,8 +58,11 @@ export interface LedgerMember {
   remark?: string;
 
   // 扩展字段（前端显示用）
-  userName?: string;
-  userAvatar?: string;
+  userName?: string;      // 用户名（账号）
+  username?: string;      // 兼容后端返回的字段
+  nickname?: string;      // 昵称
+  userAvatar?: string;    // 头像
+  avatarUrl?: string;     // 兼容后端返回的字段
 }
 
 /**

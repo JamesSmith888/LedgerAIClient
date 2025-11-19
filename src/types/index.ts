@@ -1,15 +1,9 @@
 export * from './ledger';
+export * from './user';
 
 /**
  * 通用类型定义
  */
-
-export interface User {
-  id: string;
-  name: string;
-  email: string;
-  avatar?: string;
-}
 
 export interface ListItem {
   id: string;

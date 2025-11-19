@@ -15,7 +15,7 @@ export interface TransactionResponse {
 
 export interface TransactionQueryParams {
     ledgerId?: number | null;
-    type?: 'EXPENSE' | 'INCOME' | null;
+    type?: number | null; // 1-收入, 2-支出, null-全部
     categoryId?: number | null;
     startTime?: string | null;
     endTime?: string | null;
@@ -39,16 +39,16 @@ export interface TransactionPageResponse {
 
 export const transactionAPI = {
 
-    create: async (transaction: Omit<Transaction, 'id'>): Promise<Transaction> => {
+    create: async (transaction: Omit<Transaction, 'id'>): Promise<{ id: number }> => {
         // 发送POST请求
-        const response = await apiClient.post<TransactionResponse>(
+        const response = await apiClient.post<number>(
             '/api/transactions/create',
             transaction,
         );
-        console.log('/api/transactions/create响应数据:', response.data);
+        console.log('/api/transactions/create响应数据:', response);
 
-        // 返回数据
-        return response.data;
+        // 后端返回的是交易ID（在data字段中），包装成对象
+        return { id: response.data };
     },
 
     /**
@@ -113,5 +113,20 @@ export const transactionAPI = {
      */
     delete: async (transactionId: number | string): Promise<void> => {
         await apiClient.delete(`/api/transactions/${transactionId}`);
+    },
+
+    /**
+     * 更新交易
+     */
+    update: async (
+        transactionId: number | string,
+        transaction: Partial<Omit<Transaction, 'id'>>
+    ): Promise<Transaction> => {
+        const response = await apiClient.put<TransactionResponse>(
+            `/api/transactions/${transactionId}`,
+            transaction
+        );
+        console.log('/api/transactions/{id} 更新响应:', response.data);
+        return response.data;
     },
 };

@@ -15,7 +15,7 @@ import {
 import { toast, showConfirm } from '../utils/toast';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
-import { Card } from '../components/common';
+import { Card, Icon } from '../components/common';
 import {
   BorderRadius,
   Colors,
@@ -25,6 +25,7 @@ import {
   Spacing,
 } from '../constants/theme';
 import { useLedger } from '../context/LedgerContext';
+import { useAuth } from '../context/AuthContext';
 import type { Ledger, LedgerMember } from '../types/ledger';
 import { LedgerType, getRoleName, getRoleColor } from '../types/ledger';
 import { ledgerAPI } from '../api/services/ledgerAPI';
@@ -35,6 +36,7 @@ export const LedgerDetailScreen: React.FC = () => {
   const route = useRoute();
   const params = route.params as { ledgerId: number } | undefined;
   const { refreshLedgers, deleteLedger } = useLedger();
+  const { user } = useAuth();
 
   const [ledger, setLedger] = useState<Ledger | null>(null);
   const [members, setMembers] = useState<LedgerMember[]>([]);
@@ -43,6 +45,7 @@ export const LedgerDetailScreen: React.FC = () => {
 
   const ledgerId = params?.ledgerId;
   const isShared = ledger?.type === LedgerType.SHARED;
+  const currentUserId = user?._id ? Number(user._id) : 0;
 
   // 加载账本详情
   const loadLedgerDetail = async () => {
@@ -119,6 +122,10 @@ export const LedgerDetailScreen: React.FC = () => {
   const renderMemberItem = (member: LedgerMember) => {
     const roleName = getRoleName(member.role);
     const roleColor = getRoleColor(member.role);
+    const isCurrentUser = member.userId === currentUserId;
+    
+    // 显示用户名或账号，优先显示昵称，其次显示用户名，最后显示用户ID
+    const displayName = member.nickname || member.username || member.userName || `用户${member.userId}`;
 
     return (
       <TouchableOpacity
@@ -126,7 +133,7 @@ export const LedgerDetailScreen: React.FC = () => {
         style={styles.memberItem}
         onPress={() => {
           Alert.alert(
-            member.userName || `用户${member.userId}`,
+            displayName,
             `角色：${roleName}`,
             [
               {
@@ -141,13 +148,18 @@ export const LedgerDetailScreen: React.FC = () => {
       >
         <View style={styles.memberAvatar}>
           <Text style={styles.memberAvatarText}>
-            {(member.userName || 'U')[0].toUpperCase()}
+            {displayName[0].toUpperCase()}
           </Text>
         </View>
         <View style={styles.memberInfo}>
-          <Text style={styles.memberName}>
-            {member.userName || `用户${member.userId}`}
-          </Text>
+          <View style={styles.memberNameRow}>
+            <Text style={styles.memberName}>{displayName}</Text>
+            {isCurrentUser && (
+              <View style={styles.currentUserBadge}>
+                <Text style={styles.currentUserText}>我</Text>
+              </View>
+            )}
+          </View>
           <Text style={styles.memberJoinDate}>
             加入于 {new Date(member.joinedAt).toLocaleDateString()}
           </Text>
@@ -212,9 +224,11 @@ export const LedgerDetailScreen: React.FC = () => {
                   },
                 ]}
               >
-                <Text style={styles.ledgerIcon}>
-                  {ledger.type === LedgerType.PERSONAL ? '📖' : '👨‍👩‍👧‍👦'}
-                </Text>
+                <Icon
+                  name={ledger.type === LedgerType.PERSONAL ? 'book' : 'people'}
+                  size={30}
+                  color={ledger.type === LedgerType.PERSONAL ? Colors.primary : Colors.accent.orange}
+                />
               </View>
               <View style={styles.ledgerHeaderText}>
                 <Text style={styles.ledgerName}>{ledger.name}</Text>
@@ -247,7 +261,12 @@ export const LedgerDetailScreen: React.FC = () => {
                 </Text>
                 <TouchableOpacity
                   onPress={() => {
-                    toast.info('邀请功能开发中...');
+                    if (ledger && ledgerId) {
+                      (navigation as any).navigate('InviteMember', {
+                        ledgerId,
+                        ledgerName: ledger.name
+                      });
+                    }
                   }}
                 >
                   <Text style={styles.inviteButton}>+ 邀请</Text>
@@ -472,11 +491,27 @@ const styles = StyleSheet.create({
   memberInfo: {
     flex: 1,
   },
+  memberNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    marginBottom: Spacing.xs / 2,
+  },
   memberName: {
     fontSize: FontSizes.md,
     fontWeight: FontWeights.semibold,
     color: Colors.text,
-    marginBottom: Spacing.xs / 2,
+  },
+  currentUserBadge: {
+    backgroundColor: Colors.primary,
+    paddingHorizontal: Spacing.xs,
+    paddingVertical: 2,
+    borderRadius: BorderRadius.sm,
+  },
+  currentUserText: {
+    fontSize: FontSizes.xs,
+    color: Colors.surface,
+    fontWeight: FontWeights.bold,
   },
   memberJoinDate: {
     fontSize: FontSizes.sm,

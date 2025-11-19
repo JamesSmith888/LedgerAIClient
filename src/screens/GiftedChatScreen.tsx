@@ -27,7 +27,8 @@ import {
 import { useAuth } from '../context/AuthContext.tsx';
 import type { IMessage } from 'react-native-gifted-chat';
 
-const WS_URL = 'ws://localhost:8080/ws';
+//const WS_URL = 'ws://localhost:8080/ws';
+const WS_URL = 'ws://47.114.96.56:8080/ws';
 
 // 快捷问题配置
 const QUICK_QUESTIONS = [

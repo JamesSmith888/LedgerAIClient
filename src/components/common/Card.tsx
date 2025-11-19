@@ -8,7 +8,7 @@ import { Colors, Spacing, BorderRadius, Shadows } from '../../constants/theme';
 interface CardProps {
   children: React.ReactNode;
   style?: ViewStyle;
-  variant?: 'default' | 'outlined';
+  variant?: 'default' | 'outlined' | 'flat';
 }
 
 export const Card: React.FC<CardProps> = ({
@@ -35,5 +35,8 @@ const styles = StyleSheet.create({
   card_outlined: {
     borderWidth: 1,
     borderColor: Colors.border,
+  },
+  card_flat: {
+    // 无阴影、无边框的扁平样式
   },
 });

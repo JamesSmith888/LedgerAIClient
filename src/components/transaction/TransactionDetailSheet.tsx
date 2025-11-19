@@ -24,6 +24,7 @@ import {
 import type { Transaction, Category } from '../../types/transaction';
 import type { Ledger } from '../../types/ledger';
 import { LedgerType } from '../../types/ledger';
+import { CategoryIcon } from '../common/CategoryIcon';
 
 interface TransactionDetailSheetProps {
     visible: boolean;
@@ -123,7 +124,7 @@ export const TransactionDetailSheet: React.FC<TransactionDetailSheetProps> = ({
                                             { backgroundColor: category.color + '20' },
                                         ]}
                                     >
-                                        <Text style={styles.categoryIcon}>{category.icon}</Text>
+                                        <CategoryIcon icon={category.icon} size={28} color={category.color} />
                                     </View>
                                 )}
                                 <View style={styles.amountHeaderText}>
@@ -171,6 +172,16 @@ export const TransactionDetailSheet: React.FC<TransactionDetailSheetProps> = ({
                                     <Text style={styles.detailLabel}>📝 备注</Text>
                                     <Text style={styles.detailValueDescription}>
                                         {transaction.description}
+                                    </Text>
+                                </View>
+                            )}
+
+                            {/* 创建人（仅共享账本显示）*/}
+                            {ledger?.type === LedgerType.SHARED && transaction.createdByUserId && (
+                                <View style={styles.detailRow}>
+                                    <Text style={styles.detailLabel}>👤 记录人</Text>
+                                    <Text style={styles.detailValueCreator}>
+                                        {transaction.createdByUserNickname || transaction.createdByUserName || `用户${transaction.createdByUserId}`}
                                     </Text>
                                 </View>
                             )}
@@ -378,6 +389,15 @@ const styles = StyleSheet.create({
         textAlign: 'right',
         flex: 1,
         marginLeft: Spacing.md,
+    },
+    detailValueCreator: {
+        fontSize: FontSizes.md,
+        color: Colors.textLight,
+        textAlign: 'right',
+        flex: 1,
+        marginLeft: Spacing.md,
+        fontStyle: 'italic',
+        opacity: 0.8,
     },
 
     // 操作按钮

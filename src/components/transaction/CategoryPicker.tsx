@@ -16,6 +16,7 @@ import {
   BorderRadius,
 } from '../../constants/theme';
 import type { Category } from '../../types/transaction';
+import { CategoryIcon } from '../common/CategoryIcon';
 
 interface CategoryPickerProps {
   visible: boolean;
@@ -52,7 +53,7 @@ export const CategoryPicker: React.FC<CategoryPickerProps> = ({
             isActive && { backgroundColor: Colors.primary, borderColor: Colors.primary },
           ]}
         >
-          <Text style={styles.icon}>{item.icon}</Text>
+          <CategoryIcon icon={item.icon} size={24} color={isActive ? Colors.surface : Colors.text} />
         </View>
         <Text
           style={[styles.name, isActive && { color: Colors.primary }]}
@@ -105,14 +106,21 @@ export const CategoryPicker: React.FC<CategoryPickerProps> = ({
                       onPress={() => onSelect(category)}
                       activeOpacity={0.8}
                     >
-                      <Text
-                        style={[
-                          styles.quickChipText,
-                          isActive && styles.quickChipTextActive,
-                        ]}
-                      >
-                        {category.icon} {category.name}
-                      </Text>
+                      <View style={styles.quickChipContent}>
+                        <CategoryIcon 
+                          icon={category.icon} 
+                          size={16} 
+                          color={isActive ? Colors.primary : Colors.textSecondary}
+                        />
+                        <Text
+                          style={[
+                            styles.quickChipText,
+                            isActive && styles.quickChipTextActive,
+                          ]}
+                        >
+                          {category.name}
+                        </Text>
+                      </View>
                     </TouchableOpacity>
                   );
                 })}
@@ -177,6 +185,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
     marginRight: Spacing.sm,
+  },
+  quickChipContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   quickChipActive: {
     backgroundColor: Colors.primary + '15',

@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Keyboard,
   Modal,
@@ -12,7 +13,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, CommonActions } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   BorderRadius,
@@ -24,6 +25,7 @@ import {
 } from '../constants/theme';
 import { useAuth } from '../context/AuthContext';
 import { toast } from '../utils/toast';
+import { showConfirm } from '../utils/toast';
 import type { Category, Transaction, TransactionType } from '../types/transaction';
 import { LedgerType } from '../types/ledger';
 import { CategorySelector } from '../components/transaction/CategorySelector';
@@ -34,27 +36,77 @@ import { useLedger } from '../context/LedgerContext';
 import { transactionAPI } from '../api/services';
 import { CategoryPicker } from '../components/transaction/CategoryPicker';
 import { DatePicker } from '../components/transaction/DatePicker';
+import { PaymentMethodPicker } from '../components/transaction/PaymentMethodPicker';
+import { usePaymentMethod } from '../context/PaymentMethodContext';
+import type { PaymentMethod } from '../types/paymentMethod';
+import { Icon } from '../components/common';
+import { CategoryIcon } from '../components/common/CategoryIcon';
+import { PaymentIcon } from '../components/payment/PaymentIcon';
+import { CollapsibleSection } from '../components/common/CollapsibleSection';
+import { ImageAttachmentPicker, AttachmentGallery } from '../components/attachment';
+import { attachmentAPI } from '../api/services';
+import { localAttachmentService } from '../services/localAttachmentService';
+import type { StorageType, UnifiedAttachment, LocalAttachment } from '../types/attachment';
 
-export const AddTransactionScreen: React.FC = () => {
+interface AddTransactionScreenProps {
+  route?: {
+    params?: {
+      transaction?: Transaction; // 如果传入 transaction，则为编辑模式
+    };
+  };
+}
+
+export const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({ route }) => {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
+  
+  // 编辑模式判断
+  const editingTransaction = route?.params?.transaction;
+  const isEditMode = !!editingTransaction;
+
+  // 使用 ref 保存导航对象，避免在异步回调中失效
+  const navigationRef = useRef(navigation);
+  
+  // 更新 ref
+  useEffect(() => {
+    navigationRef.current = navigation;
+  }, [navigation]);
 
   // ========== 上下文和状态 ==========
   const { user } = useAuth(); // ✨ 获取用户信息
   const { expenseCategories, incomeCategories, isLoading: categoriesLoading } = useCategories();
   const { ledgers, currentLedger, setCurrentLedger } = useLedger();
+  const { paymentMethods, defaultPaymentMethod } = usePaymentMethod();
 
-  // 记账核心状态
-  const [transactionType, setTransactionType] = useState<TransactionType>('EXPENSE');
-  const [amount, setAmount] = useState('0');
+  // 记账核心状态（编辑模式时初始化为原有数据）
+  const [transactionType, setTransactionType] = useState<TransactionType>(
+    editingTransaction?.type || 'EXPENSE'
+  );
+  const [amount, setAmount] = useState(
+    editingTransaction ? editingTransaction.amount.toString() : '0'
+  );
+  const [expression, setExpression] = useState(''); // 新增：用于显示计算表达式
   const [selectedCategory, setSelectedCategory] = useState<Category | undefined>(undefined);
-  const [description, setDescription] = useState('');
-  const [transactionDate, setTransactionDate] = useState(new Date());
+  const [description, setDescription] = useState(editingTransaction?.description || '');
+  const [transactionDate, setTransactionDate] = useState(
+    editingTransaction ? new Date(editingTransaction.transactionDateTime) : new Date()
+  );
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<PaymentMethod | undefined>(undefined);
+
+  // 附件状态
+  const [attachments, setAttachments] = useState<Array<{uri: string; fileName?: string; type?: string; fileSize?: number; isExisting?: boolean}>>([]);
+  const [isUploadingAttachments, setIsUploadingAttachments] = useState(false);
+  const [storageType, setStorageType] = useState<StorageType>('local'); // 默认本地存储
+  const [initialAttachmentCount, setInitialAttachmentCount] = useState(0); // 记录初始附件数量
+  const [loadedAttachments, setLoadedAttachments] = useState<UnifiedAttachment[]>([]); // 编辑模式下加载的附件（用于展示）
+  const [showGallery, setShowGallery] = useState(false); // 全屏图库状态
+  const [galleryInitialIndex, setGalleryInitialIndex] = useState(0); // 图库初始索引
 
   // UI 状态
   const [isLoading, setIsLoading] = useState(false);
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showPaymentMethodPicker, setShowPaymentMethodPicker] = useState(false);
 
   // ========== 初始化和副作用 ==========
   // 切换收支类型时，重置分类和金额
@@ -62,37 +114,236 @@ export const AddTransactionScreen: React.FC = () => {
     setSelectedCategory(undefined);
   }, [transactionType]);
 
-  // 页面聚焦时，默认选中第一个支出分类
+  // 编辑模式：加载附件（优先加载本地，如果没有则尝试云端）
+  useEffect(() => {
+    const loadAttachments = async () => {
+      if (isEditMode && editingTransaction) {
+        try {
+          // 先尝试加载本地附件
+          const localAttachments = await localAttachmentService.getAttachments(editingTransaction.id);
+          if (localAttachments.length > 0) {
+            // 将本地附件转换为 ImageAttachment 格式用于显示，标记为已存在
+            const imageAttachments = localAttachments.map(att => ({
+              uri: localAttachmentService.getFileUri(att.localPath),
+              fileName: att.fileName,
+              type: att.fileType,
+              fileSize: att.fileSize,
+              isExisting: true, // 标记为已存在的附件
+            }));
+            setAttachments(imageAttachments);
+            setInitialAttachmentCount(localAttachments.length);
+            setStorageType('local');
+            // 转换为 UnifiedAttachment 用于 AttachmentGallery
+            const unifiedAttachments: UnifiedAttachment[] = localAttachments.map(att => ({
+              ...att,
+              storageType: 'local' as const,
+            }));
+            setLoadedAttachments(unifiedAttachments);
+            console.log(`加载了 ${localAttachments.length} 个本地附件`);
+            return;
+          }
+
+          // 如果没有本地附件，尝试加载云端附件
+          if (editingTransaction.attachmentCount && editingTransaction.attachmentCount > 0) {
+            try {
+              const cloudAttachments = await attachmentAPI.list(editingTransaction.id);
+              if (cloudAttachments.length > 0) {
+                // 云端附件只显示元数据，不实际下载，标记为已存在
+                const imageAttachments = cloudAttachments.map(att => ({
+                  uri: attachmentAPI.getThumbnailUrl(att.id), // 使用缩略图URL
+                  fileName: att.fileName,
+                  type: att.fileType,
+                  fileSize: att.fileSize,
+                  isExisting: true, // 标记为已存在的附件
+                }));
+                setAttachments(imageAttachments);
+                setInitialAttachmentCount(cloudAttachments.length);
+                setStorageType('cloud');
+                // API 返回的已经是完整的 Attachment 对象，直接使用
+                setLoadedAttachments(cloudAttachments);
+                console.log(`加载了 ${cloudAttachments.length} 个云端附件`);
+              }
+            } catch (cloudError) {
+              console.warn('加载云端附件失败:', cloudError);
+            }
+          }
+        } catch (error) {
+          console.error('加载附件失败:', error);
+        }
+      }
+    };
+
+    loadAttachments();
+  }, [isEditMode, editingTransaction]);
+
+  // 页面聚焦时，默认选中第一个支出分类或编辑模式下的分类
   useFocusEffect(
     useCallback(() => {
-      if (transactionType === 'EXPENSE' && expenseCategories.length > 0) {
+      // 编辑模式：查找对应的分类和支付方式
+      if (isEditMode && editingTransaction) {
+        const categories = editingTransaction.type === 'EXPENSE' ? expenseCategories : incomeCategories;
+        const category = categories.find(c => c.id === editingTransaction.categoryId);
+        if (category) {
+          setSelectedCategory(category);
+        }
+        
+        // 设置支付方式
+        if (editingTransaction.paymentMethodId) {
+          const paymentMethod = paymentMethods.find(p => p.id === editingTransaction.paymentMethodId);
+          if (paymentMethod) {
+            setSelectedPaymentMethod(paymentMethod);
+          }
+        }
+        return;
+      }
+      
+      // 新增模式：默认选中第一个分类和默认支付方式
+      if (transactionType === 'EXPENSE' && expenseCategories.length > 0 && !selectedCategory) {
         setSelectedCategory(expenseCategories[0]);
-      } else if (transactionType === 'INCOME' && incomeCategories.length > 0) {
+      } else if (transactionType === 'INCOME' && incomeCategories.length > 0 && !selectedCategory) {
         setSelectedCategory(incomeCategories[0]);
       }
-    }, [expenseCategories, incomeCategories, transactionType])
+      
+      // 设置默认支付方式
+      if (!selectedPaymentMethod && defaultPaymentMethod) {
+        setSelectedPaymentMethod(defaultPaymentMethod);
+      }
+    }, [expenseCategories, incomeCategories, transactionType, isEditMode, editingTransaction, selectedCategory, paymentMethods, defaultPaymentMethod, selectedPaymentMethod])
   );
 
   // ========== 事件处理 ==========
+
+  // 处理支付方式选择点击
+  const handlePaymentMethodClick = () => {
+    // 检查是否有支付方式
+    if (paymentMethods.length === 0) {
+      showConfirm(
+        '暂无支付方式',
+        '您还没有添加支付方式，是否前往设置？',
+        () => {
+          // 确认：先关闭当前页面，再导航到支付方式管理页面
+          console.log('准备导航到支付方式管理页面');
+          
+          // 先关闭当前 modal
+          navigation.goBack();
+          
+          // 使用 CommonActions 进行导航，更可靠
+          setTimeout(() => {
+            try {
+              // 方法1: 使用 dispatch 和 CommonActions
+              navigationRef.current.dispatch(
+                CommonActions.navigate({
+                  name: 'PaymentMethodManagement',
+                })
+              );
+              console.log('✅ 导航命令已发送');
+            } catch (error) {
+              console.error('❌ 导航失败:', error);
+            }
+          }, 400);
+        }
+      );
+      return;
+    }
+    // 有支付方式：打开选择器
+    setShowPaymentMethodPicker(true);
+  };
 
   // 切换收支类型
   const handleTypeChange = (type: TransactionType) => {
     if (type !== transactionType) {
       setTransactionType(type);
       setAmount('0'); // 重置金额
+      setExpression(''); // 重置表达式
     }
   };
 
   // 处理数字键盘输入
   const handleNumberPress = (number: string) => {
+    // 处理小数点
+    if (number === '.') {
+      // 如果已经有小数点，不允许再输入
+      if (amount.includes('.')) {
+        return;
+      }
+      // 如果当前是0，添加"0."
+      if (amount === '0') {
+        setAmount('0.');
+        return;
+      }
+      // 否则直接添加小数点
+      setAmount(prev => prev + '.');
+      return;
+    }
+    
+    // 处理数字输入
     if (amount.includes('.') && amount.split('.')[1].length >= 2) {
       return; // 小数点后最多两位
     }
-    if (amount === '0' && number !== '.') {
+    if (amount === '0') {
       setAmount(number);
     } else {
       setAmount(prev => prev + number);
     }
+  };
+
+  // 处理操作符（加减）
+  const handleOperatorPress = (operator: '+' | '-') => {
+    const currentAmount = parseFloat(amount);
+    if (isNaN(currentAmount) || currentAmount === 0) {
+      return;
+    }
+
+    // 将当前金额添加到表达式中
+    const newExpression = expression ? `${expression} ${amount} ${operator}` : `${amount} ${operator}`;
+    setExpression(newExpression);
+    setAmount('0'); // 重置输入，等待下一个数字
+  };
+
+  // 处理等号按钮 - 完成计算
+  const handleEquals = () => {
+    if (!expression) {
+      // 没有表达式，无需计算
+      return;
+    }
+
+    const currentAmount = parseFloat(amount);
+    if (isNaN(currentAmount) && amount !== '0') {
+      return;
+    }
+
+    // 构建完整表达式：expression + amount
+    // 例如："12 + " + "5" = "12 + 5"
+    const fullExpression = currentAmount !== 0 || amount !== '0' 
+      ? `${expression} ${amount}`
+      : expression.trim().replace(/[+\-]\s*$/, ''); // 如果amount是0，移除末尾操作符
+
+    // 解析并计算
+    const tokens = fullExpression.split(/\s+/);
+    if (tokens.length === 0) {
+      return;
+    }
+
+    let result = parseFloat(tokens[0]);
+    
+    for (let i = 1; i < tokens.length; i += 2) {
+      if (i + 1 >= tokens.length) break;
+      
+      const operator = tokens[i];
+      const operand = parseFloat(tokens[i + 1]);
+      
+      if (isNaN(operand)) continue;
+      
+      if (operator === '+') {
+        result += operand;
+      } else if (operator === '-') {
+        result -= operand;
+      }
+    }
+    
+    // 清空表达式，显示最终结果
+    setExpression('');
+    setAmount(result.toFixed(2));
   };
 
   // 处理删除键
@@ -100,8 +351,39 @@ export const AddTransactionScreen: React.FC = () => {
     setAmount(prev => (prev.length > 1 ? prev.slice(0, -1) : '0'));
   };
 
-  // 获取最终要保存的金额
+  // 获取最终要保存的金额（如果有未完成的表达式，先计算）
   const getFinalAmount = (): number => {
+    // 如果有表达式，需要先计算完整结果
+    if (expression) {
+      const currentAmount = parseFloat(amount);
+      const fullExpression = !isNaN(currentAmount) && currentAmount !== 0
+        ? `${expression} ${amount}`
+        : expression.trim().replace(/[+\-]\s*$/, '');
+      
+      const tokens = fullExpression.split(/\s+/);
+      if (tokens.length > 0) {
+        let result = parseFloat(tokens[0]);
+        
+        for (let i = 1; i < tokens.length; i += 2) {
+          if (i + 1 >= tokens.length) break;
+          
+          const operator = tokens[i];
+          const operand = parseFloat(tokens[i + 1]);
+          
+          if (isNaN(operand)) continue;
+          
+          if (operator === '+') {
+            result += operand;
+          } else if (operator === '-') {
+            result -= operand;
+          }
+        }
+        
+        return isNaN(result) ? 0 : result;
+      }
+    }
+    
+    // 没有表达式，直接返回当前金额
     const finalAmount = parseFloat(amount);
     return isNaN(finalAmount) ? 0 : finalAmount;
   };
@@ -111,7 +393,52 @@ export const AddTransactionScreen: React.FC = () => {
     return transactionDate;
   };
 
-  // 快速保存
+  // 保存附件（云端或本地）
+  const saveAttachments = async (transactionId: number, attachmentsToSave: typeof attachments) => {
+    if (attachmentsToSave.length === 0) return;
+
+    setIsUploadingAttachments(true);
+    
+    try {
+      if (storageType === 'cloud') {
+        // 云端存储：上传到服务器
+        for (const attachment of attachmentsToSave) {
+          // 跳过已存在的附件
+          if (attachment.isExisting) continue;
+          
+          const formData = new FormData();
+          formData.append('file', {
+            uri: attachment.uri,
+            type: attachment.type || 'image/jpeg',
+            name: attachment.fileName || 'image.jpg',
+          } as any);
+
+          await attachmentAPI.upload(transactionId, formData);
+        }
+      } else {
+        // 本地存储：保存到设备文件系统
+        for (const attachment of attachmentsToSave) {
+          // 跳过已存在的附件
+          if (attachment.isExisting) continue;
+          
+          await localAttachmentService.saveAttachment(
+            transactionId,
+            attachment.uri,
+            attachment.fileName || 'image.jpg',
+            attachment.type || 'image/jpeg',
+            attachment.fileSize || 0
+          );
+        }
+      }
+    } catch (error) {
+      console.error('保存附件失败:', error);
+      toast.error(`部分附件${storageType === 'cloud' ? '上传' : '保存'}失败`);
+    } finally {
+      setIsUploadingAttachments(false);
+    }
+  };
+
+  // 快速保存（新增或更新）
   const handleQuickSave = async () => {
     const finalAmount = getFinalAmount();
 
@@ -134,18 +461,60 @@ export const AddTransactionScreen: React.FC = () => {
         amount: finalAmount,
         categoryId: selectedCategory.id,
         description: description.trim(),
-        date: getTransactionDate().toISOString(),
+        transactionDateTime: getTransactionDate().toISOString(),
         ledgerId: currentLedger?.id,
-        accountId: user?._id, // ✨ 修正：使用 _id
+        paymentMethodId: selectedPaymentMethod?.id,
       };
 
-      await transactionAPI.create(transactionData as Omit<Transaction, 'id'>);
+      let transactionId: number;
 
-      toast.success('记账成功！');
+      if (isEditMode && editingTransaction) {
+        // 编辑模式：更新交易
+        await transactionAPI.update(editingTransaction.id, transactionData);
+        transactionId = editingTransaction.id;
+        //toast.success('更新成功！');
+      } else {
+        // 新增模式：创建交易
+        const result = await transactionAPI.create(transactionData as any);
+        transactionId = result.id;
+        //toast.success('记账成功！');
+      }
+
+      // 保存附件
+      if (!isEditMode) {
+        // 新增模式：保存所有附件（都是新的）
+        if (attachments.length > 0) {
+          await saveAttachments(transactionId, attachments);
+        }
+      } else {
+        // 编辑模式：只保存未标记为已存在的附件
+        const newAttachments = attachments.filter(att => !att.isExisting);
+        if (newAttachments.length > 0) {
+          await saveAttachments(transactionId, newAttachments);
+        }
+      }
+
       setTimeout(() => navigation.goBack(), 300);
     } catch (error) {
       console.error('保存交易失败:', error);
-      toast.error('保存失败，请稍后重试');
+      toast.error(isEditMode ? '更新失败，请稍后重试' : '保存失败，请稍后重试');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 删除交易
+  const handleDelete = async () => {
+    if (!isEditMode || !editingTransaction) return;
+
+    try {
+      setIsLoading(true);
+      await transactionAPI.delete(editingTransaction.id);
+      toast.success('删除成功');
+      setTimeout(() => navigation.goBack(), 300);
+    } catch (error) {
+      console.error('删除交易失败:', error);
+      toast.error('删除失败，请稍后重试');
     } finally {
       setIsLoading(false);
     }
@@ -159,20 +528,32 @@ export const AddTransactionScreen: React.FC = () => {
         backgroundColor={Colors.backgroundSecondary}
       />
 
-      {/* ========== ✨ 新增：关闭按钮 ========== */}
+      {/* ========== ✨ 新增：头部导航栏 ========== */}
       <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.closeButton}
-          onPress={() => navigation.goBack()}
-        >
-          <Text style={styles.closeButtonText}>✕</Text>
-        </TouchableOpacity>
+        <View style={styles.headerPlaceholder} />
+        
+        <Text style={styles.headerTitle}>
+          {isEditMode ? '编辑交易' : '新增交易'}
+        </Text>
+        
+        {isEditMode && (
+          <TouchableOpacity
+            style={styles.deleteButton}
+            onPress={handleDelete}
+            disabled={isLoading}
+          >
+            <Icon name="trash" size={18} color={Colors.expense} />
+          </TouchableOpacity>
+        )}
+        
+        {!isEditMode && <View style={styles.headerPlaceholder} />}
       </View>
 
-      <ScrollView
+      <ScrollView 
         style={styles.scrollView}
-        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.contentContainer}
         keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
       >
         {/* ========== 区域1: 金额 & 收支类型 ========== */}
         <View style={styles.amountSection}>
@@ -214,19 +595,61 @@ export const AddTransactionScreen: React.FC = () => {
 
           {/* 金额显示 */}
           <View style={styles.amountDisplayContainer}>
-            <Text style={styles.currencySymbol}>¥</Text>
-            <Text
-              style={[
-                styles.amountText,
-                transactionType === 'EXPENSE'
-                  ? styles.amountTextExpense
-                  : styles.amountTextIncome,
-              ]}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-            >
-              {getFinalAmount().toLocaleString()}
-            </Text>
+            <View style={styles.amountDisplay}>
+              {/* 显示完整计算表达式（同一行） */}
+              <View style={styles.expressionRow}>
+                {expression ? (
+                  <>
+                    {/* 有表达式时的显示 */}
+                    {amount !== '0' && parseFloat(amount) !== 0 ? (
+                      <>
+                        {/* 已输入第二个数字：5 + 5 = ¥10 */}
+                        <Text style={styles.expressionText} numberOfLines={1}>
+                          {expression} {amount} = 
+                        </Text>
+                        <Text style={styles.currencySymbol}>¥</Text>
+                        <Text
+                          style={[
+                            styles.amountText,
+                            transactionType === 'EXPENSE'
+                              ? styles.amountTextExpense
+                              : styles.amountTextIncome,
+                          ]}
+                          numberOfLines={1}
+                          adjustsFontSizeToFit
+                        >
+                          {getFinalAmount().toLocaleString()}
+                        </Text>
+                      </>
+                    ) : (
+                      <>
+                        {/* 未输入第二个数字：5 + */}
+                        <Text style={styles.expressionText} numberOfLines={1}>
+                          {expression}
+                        </Text>
+                      </>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {/* 无表达式：¥5 */}
+                    <Text style={styles.currencySymbol}>¥</Text>
+                    <Text
+                      style={[
+                        styles.amountText,
+                        transactionType === 'EXPENSE'
+                          ? styles.amountTextExpense
+                          : styles.amountTextIncome,
+                      ]}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                    >
+                      {amount}
+                    </Text>
+                  </>
+                )}
+              </View>
+            </View>
           </View>
         </View>
 
@@ -238,9 +661,11 @@ export const AddTransactionScreen: React.FC = () => {
             onPress={() => setShowCategoryPicker(true)}
           >
             <View style={styles.detailRowLeft}>
-              <Text style={styles.detailIcon}>
-                {selectedCategory?.icon || '🏷️'}
-              </Text>
+              {selectedCategory?.icon ? (
+                <CategoryIcon icon={selectedCategory.icon} size={22} color={Colors.text} style={{width: 24, textAlign: 'center'}} />
+              ) : (
+                <Icon name="pricetag" size={22} color={Colors.primary} style={{width: 24, textAlign: 'center'}} />
+              )}
               <Text style={styles.detailLabel}>分类</Text>
             </View>
             <View style={styles.detailRowRight}>
@@ -259,7 +684,7 @@ export const AddTransactionScreen: React.FC = () => {
                 ledgers={ledgers}
                 currentLedger={currentLedger}
                 onSelect={ledger => {
-                  setCurrentLedger(ledger);
+                  if (ledger) setCurrentLedger(ledger);
                 }}
               />
             </View>
@@ -271,7 +696,7 @@ export const AddTransactionScreen: React.FC = () => {
             onPress={() => setShowDatePicker(true)}
           >
             <View style={styles.detailRowLeft}>
-              <Text style={styles.detailIcon}>🗓️</Text>
+              <Icon name="calendar" size={22} color={Colors.primary} style={{width: 24, textAlign: 'center'}} />
               <Text style={styles.detailLabel}>日期</Text>
             </View>
             <View style={styles.detailRowRight}>
@@ -282,9 +707,38 @@ export const AddTransactionScreen: React.FC = () => {
             </View>
           </TouchableOpacity>
 
-          {/* 备注 */}
+          {/* 支付方式 */}
+          <TouchableOpacity
+            style={styles.detailRow}
+            onPress={handlePaymentMethodClick}
+          >
+            <View style={styles.detailRowLeft}>
+              {selectedPaymentMethod ? (
+                <PaymentIcon 
+                  type={selectedPaymentMethod.type}
+                  iconName={selectedPaymentMethod.icon}
+                  size={22}
+                  style={{width: 24, textAlign: 'center'}}
+                />
+              ) : (
+                <Icon name="card" size={22} color={Colors.primary} style={{width: 24, textAlign: 'center'}} />
+              )}
+              <Text style={styles.detailLabel}>支付方式</Text>
+            </View>
+            <View style={styles.detailRowRight}>
+              <Text style={[
+                styles.detailValue,
+                !selectedPaymentMethod && styles.detailValuePlaceholder
+              ]}>
+                {selectedPaymentMethod?.name || '请选择'}
+              </Text>
+              <Text style={styles.detailArrow}>›</Text>
+            </View>
+          </TouchableOpacity>
+
+          {/* Line 599 omitted */}
           <View style={styles.descriptionRow}>
-            <Text style={styles.detailIcon}>✍️</Text>
+            <Icon name="create" size={22} color={Colors.primary} style={{width: 24, textAlign: 'center'}} />
             <TextInput
               style={styles.descriptionInput}
               placeholder="添加备注..."
@@ -295,16 +749,39 @@ export const AddTransactionScreen: React.FC = () => {
           </View>
         </View>
 
+        {/* ========== 区域2.5: 图片附件 ========== */}
+        <View style={styles.attachmentSection}>
+          <CollapsibleSection
+            title="附件"
+            icon="paperclip"
+            defaultCollapsed={true}
+            badge={attachments.length}
+          >
+            <ImageAttachmentPicker
+              images={attachments}
+              onImagesChange={setAttachments}
+              maxImages={9}
+              maxSizeInMB={5}
+              storageType={storageType}
+              onStorageTypeChange={setStorageType}
+              onImagePress={(index) => {
+                // 点击图片打开全屏图库
+                setGalleryInitialIndex(index);
+                setShowGallery(true);
+              }}
+            />
+          </CollapsibleSection>
+        </View>
+
         {/* ========== 区域3: 数字键盘 ========== */}
         <View style={styles.keypadSection}>
           <NumberKeypad
             onNumberPress={handleNumberPress}
             onDeletePress={handleDeletePress}
+            onOperatorPress={handleOperatorPress}
+            onEquals={handleEquals}
           />
         </View>
-
-        {/* 底部安全区域填充 */}
-        <View style={{ height: 120 }} />
       </ScrollView>
 
       {/* ========== 底部保存按钮 ========== */}
@@ -320,16 +797,25 @@ export const AddTransactionScreen: React.FC = () => {
             transactionType === 'EXPENSE'
               ? styles.saveButtonExpense
               : styles.saveButtonIncome,
-            isLoading && styles.saveButtonDisabled,
+            (isLoading || isUploadingAttachments) && styles.saveButtonDisabled,
           ]}
           onPress={handleQuickSave}
           activeOpacity={0.8}
-          disabled={isLoading}
+          disabled={isLoading || isUploadingAttachments}
         >
-          {isLoading ? (
-            <ActivityIndicator color={Colors.surface} />
+          {(isLoading || isUploadingAttachments) ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <ActivityIndicator color={Colors.surface} />
+              {isUploadingAttachments && (
+                <Text style={[styles.saveButtonText, { marginLeft: 8 }]}>
+                  上传附件中...
+                </Text>
+              )}
+            </View>
           ) : (
-            <Text style={styles.saveButtonText}>保 存</Text>
+            <Text style={styles.saveButtonText}>
+              {isEditMode ? '保存' : '完成'}
+            </Text>
           )}
         </TouchableOpacity>
       </View>
@@ -359,6 +845,88 @@ export const AddTransactionScreen: React.FC = () => {
         onClose={() => setShowDatePicker(false)}
         currentDate={transactionDate}
       />
+
+      {/* ========== 支付方式选择器 Modal ========== */}
+      <PaymentMethodPicker
+        visible={showPaymentMethodPicker}
+        paymentMethods={paymentMethods}
+        currentPaymentMethod={selectedPaymentMethod}
+        onSelect={paymentMethod => {
+          setSelectedPaymentMethod(paymentMethod);
+          setShowPaymentMethodPicker(false);
+        }}
+        onClose={() => setShowPaymentMethodPicker(false)}
+        title="选择支付方式"
+      />
+
+      {/* ========== 附件图库（仅用于全屏查看） ========== */}
+      {loadedAttachments.length > 0 && (
+        <AttachmentGallery
+          attachments={loadedAttachments}
+          editable={true}
+          hideThumbnails={true}
+          externalSelectedIndex={showGallery ? galleryInitialIndex : null}
+          onCloseFullscreen={() => setShowGallery(false)}
+          onDelete={async (attachmentId) => {
+            try {
+              // 从 loadedAttachments 中找到要删除的附件
+              const attachment = loadedAttachments.find(att => att.id === attachmentId);
+              if (!attachment) return;
+
+              if (attachment.storageType === 'local') {
+                await localAttachmentService.deleteAttachment(
+                  editingTransaction!.id,
+                  attachmentId as string
+                );
+              } else {
+                await attachmentAPI.delete(attachmentId as number);
+              }
+              
+              // 重新加载附件列表
+              const localAtts = await localAttachmentService.getAttachments(editingTransaction!.id);
+              if (localAtts.length > 0) {
+                const imageAtts = localAtts.map(att => ({
+                  uri: localAttachmentService.getFileUri(att.localPath),
+                  fileName: att.fileName,
+                  type: att.fileType,
+                  fileSize: att.fileSize,
+                  isExisting: true, // 标记为已存在
+                }));
+                setAttachments(imageAtts);
+                setInitialAttachmentCount(localAtts.length);
+                const unified: UnifiedAttachment[] = localAtts.map(att => ({
+                  ...att,
+                  storageType: 'local' as const,
+                }));
+                setLoadedAttachments(unified);
+              } else {
+                const cloudAtts = await attachmentAPI.list(editingTransaction!.id);
+                if (cloudAtts.length > 0) {
+                  const imageAtts = cloudAtts.map(att => ({
+                    uri: attachmentAPI.getThumbnailUrl(att.id),
+                    fileName: att.fileName,
+                    type: att.fileType,
+                    fileSize: att.fileSize,
+                    isExisting: true, // 标记为已存在
+                  }));
+                  setAttachments(imageAtts);
+                  setInitialAttachmentCount(cloudAtts.length);
+                  setLoadedAttachments(cloudAtts);
+                } else {
+                  // 所有附件都删除了
+                  setAttachments([]);
+                  setInitialAttachmentCount(0);
+                  setLoadedAttachments([]);
+                  setShowGallery(false);
+                }
+              }
+            } catch (error) {
+              console.error('删除附件失败:', error);
+              Alert.alert('错误', '删除附件失败');
+            }
+          }}
+        />
+      )}
     </View>
   );
 };
@@ -384,10 +952,24 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.backgroundSecondary,
   },
+  scrollView: {
+    flex: 1,
+  },
   header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     paddingHorizontal: Spacing.md,
     paddingTop: Spacing.sm,
-    alignItems: 'flex-end',
+    paddingBottom: Spacing.sm,
+  },
+  headerTitle: {
+    fontSize: FontSizes.lg,
+    fontWeight: FontWeights.bold,
+    color: Colors.text,
+  },
+  headerPlaceholder: {
+    width: 32,
   },
   closeButton: {
     width: 32,
@@ -403,14 +985,26 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     fontWeight: '600',
   },
-  scrollView: {
-    flex: 1,
+  deleteButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: Colors.surface,
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...Shadows.sm,
+  },
+  deleteButtonText: {
+    fontSize: 18,
+  },
+  contentContainer: {
+    flexGrow: 1,
   },
 
   // ========== 金额区域 ==========
   amountSection: {
     paddingHorizontal: Spacing.lg,
-    paddingBottom: Spacing.lg,
+    paddingVertical: Spacing.md,
     backgroundColor: Colors.backgroundSecondary,
   },
   typeSelector: {
@@ -419,7 +1013,7 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.lg,
     padding: Spacing.xs,
     alignSelf: 'center',
-    marginBottom: Spacing.lg,
+    marginBottom: Spacing.md,
     ...Shadows.sm,
   },
   typeButton: {
@@ -446,16 +1040,38 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: Spacing.sm,
+    paddingVertical: Spacing.xs,
+    minHeight: 80,
+  },
+  amountDisplay: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  expressionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+  },
+  expressionText: {
+    fontSize: FontSizes.lg,
+    color: Colors.textSecondary,
+    marginRight: Spacing.xs,
+    fontWeight: FontWeights.regular,
+  },
+  currentAmountRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   currencySymbol: {
     fontSize: FontSizes.xxxl,
     color: Colors.textSecondary,
-    marginRight: Spacing.sm,
+    marginRight: Spacing.xs,
     fontWeight: FontWeights.medium,
   },
   amountText: {
-    fontSize: 64,
+    fontSize: 48,
     fontWeight: 'bold',
     textAlign: 'center',
   },
@@ -480,7 +1096,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
+    paddingVertical: Spacing.sm,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
   },
@@ -507,6 +1123,9 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     marginRight: Spacing.sm,
   },
+  detailValuePlaceholder: {
+    color: Colors.textLight,
+  },
   detailArrow: {
     fontSize: FontSizes.lg,
     color: Colors.textLight,
@@ -524,17 +1143,24 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.sm,
   },
 
+  // ========== 附件区域 ==========
+  attachmentSection: {
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.xl,
+    marginHorizontal: Spacing.md,
+    marginBottom: Spacing.lg,
+    paddingVertical: Spacing.xs,
+    ...Shadows.md,
+  },
+
   // ========== 键盘区域 ==========
   keypadSection: {
     paddingHorizontal: Spacing.md,
+    paddingTop: Spacing.xs,
   },
 
   // ========== 底部栏 ==========
   bottomBar: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
     backgroundColor: Colors.surface,
     paddingHorizontal: Spacing.lg,
     paddingTop: Spacing.sm,

@@ -18,6 +18,10 @@ export interface Transaction {
   transactionDateTime: string;
   ledgerId?: number;
   createdByUserId?: number;
+  createdByUserName?: string;  // 创建人用户名（用于后备）
+  createdByUserNickname?: string;  // 创建人昵称（优先显示）
+  paymentMethodId?: number;
+  attachmentCount?: number; // 附件数量
 }
 
 // 预定义的类别

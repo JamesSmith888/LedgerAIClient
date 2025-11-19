@@ -9,14 +9,16 @@ import {
 import { showConfirm } from '../utils/toast';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import { Colors, Spacing, FontSizes, BorderRadius, Shadows } from '../constants/theme';
+import { Colors, Spacing, FontSizes, BorderRadius, Shadows, FontWeights } from '../constants/theme';
 import { useAuth } from '../context/AuthContext';
 import { useLedger } from '../context/LedgerContext';
+import { Icon, FeatherIcons, AppIcons } from '../components/common';
 
 export const ProfileScreen: React.FC = () => {
     const navigation = useNavigation();
     const { user, logout } = useAuth();
-    const { ledgers, currentLedger } = useLedger();
+    const { ledgers, currentLedger, defaultLedgerId } = useLedger();
+    const defaultLedger = defaultLedgerId ? ledgers.find(l => l.id === defaultLedgerId) : null;
 
     const handleLogout = () => {
         showConfirm(
@@ -28,47 +30,77 @@ export const ProfileScreen: React.FC = () => {
         );
     }
 
+    // 获取显示的用户名：优先显示昵称，然后是用户名
+    const displayName = (user?.nickname) || (user?.username) || (user?.name) || '用户';
+
     return (
         <ScrollView style={styles.container}>
             {/* 头部用户信息 */}
             <View style={styles.header}>
                 <View style={styles.avatarContainer}>
-                    <Text style={styles.avatarEmoji}>👤</Text>
+                    <Icon name={AppIcons.person} size={40} color={Colors.surface} />
                 </View>
-                <Text style={styles.username}>{user?.name || '用户'}</Text>
+                <Text style={styles.username}>{displayName}</Text>
+                <TouchableOpacity
+                    style={styles.editProfileButton}
+                    onPress={() => (navigation as any).navigate('EditProfile')}
+                    activeOpacity={0.7}
+                >
+                    <Icon type="feather" name={FeatherIcons.edit2} size={16} color={Colors.text} />
+                    <Text style={styles.editProfileText}>编辑</Text>
+                </TouchableOpacity>
             </View>
 
             {/* 账本管理入口 */}
             <View style={styles.menuSection}>
-                <TouchableOpacity 
+                <TouchableOpacity
                     style={styles.menuItem}
                     onPress={() => (navigation as any).navigate('LedgerManagement')}
                 >
-                    <Text style={styles.menuIcon}>📖</Text>
+                    <Icon name={AppIcons.book} size={24} color={Colors.primary} />
                     <View style={styles.menuTextContainer}>
                         <Text style={styles.menuText}>我的账本</Text>
                         <Text style={styles.menuSubtext}>
-                            {currentLedger?.name || '未选择'} · {ledgers.length}个账本
+                            {defaultLedger?.name || '未设置默认'} · {ledgers.length}个账本
                         </Text>
                     </View>
-                    <Text style={styles.menuArrow}>›</Text>
+                    <Icon name={AppIcons.chevronForward} size={20} color={Colors.textSecondary} />
+                </TouchableOpacity>
+
+                <View style={styles.divider} />
+
+                <TouchableOpacity
+                    style={styles.menuItem}
+                    onPress={() => (navigation as any).navigate('PaymentMethodManagement')}
+                >
+                    <Icon name={AppIcons.cardOutline} size={24} color={Colors.primary} />
+                    <View style={styles.menuTextContainer}>
+                        <Text style={styles.menuText}>支付方式</Text>
+                        <Text style={styles.menuSubtext}>
+                            管理你的支付方式
+                        </Text>
+                    </View>
+                    <Icon name={AppIcons.chevronForward} size={20} color={Colors.textSecondary} />
                 </TouchableOpacity>
             </View>
 
             {/* 菜单选项 */}
             <View style={styles.menuSection}>
                 <TouchableOpacity style={styles.menuItem}>
-                    <Text style={styles.menuIcon}>⚙️</Text>
+                    <Icon name={AppIcons.settingsOutline} size={24} color={Colors.textSecondary} />
                     <Text style={styles.menuText}>设置</Text>
-                    <Text style={styles.menuArrow}>›</Text>
+                    <Icon name={AppIcons.chevronForward} size={20} color={Colors.textSecondary} />
                 </TouchableOpacity>
 
                 <View style={styles.divider} />
 
-                <TouchableOpacity style={styles.menuItem}>
-                    <Text style={styles.menuIcon}>❓</Text>
+                <TouchableOpacity
+                    style={styles.menuItem}
+                    onPress={() => (navigation as any).navigate('Feedback')}
+                >
+                    <Icon name={AppIcons.helpCircle} size={24} color={Colors.textSecondary} />
                     <Text style={styles.menuText}>帮助与反馈</Text>
-                    <Text style={styles.menuArrow}>›</Text>
+                    <Icon name={AppIcons.chevronForward} size={20} color={Colors.textSecondary} />
                 </TouchableOpacity>
             </View>
 
@@ -106,14 +138,29 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         marginBottom: Spacing.md,
     },
-    avatarEmoji: {
-        fontSize: 40,
-    },
     username: {
         fontSize: FontSizes.xl,
         fontWeight: 'bold',
         color: Colors.text,
         marginBottom: Spacing.xs,
+    },
+    editProfileButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: Spacing.md,
+        paddingHorizontal: Spacing.lg,
+        paddingVertical: Spacing.sm,
+        backgroundColor: Colors.surface,
+        borderRadius: BorderRadius.round,
+        borderWidth: 1,
+        borderColor: Colors.border,
+        gap: Spacing.xs,
+        ...Shadows.sm,
+    },
+    editProfileText: {
+        fontSize: FontSizes.sm,
+        color: Colors.text,
+        fontWeight: FontWeights.medium,
     },
     userEmail: {
         fontSize: FontSizes.sm,
@@ -128,10 +175,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         paddingVertical: Spacing.md,
-    },
-    menuIcon: {
-        fontSize: 20,
-        marginRight: Spacing.md,
+        gap: Spacing.md,
     },
     menuTextContainer: {
         flex: 1,
@@ -144,10 +188,6 @@ const styles = StyleSheet.create({
         fontSize: FontSizes.sm,
         color: Colors.textSecondary,
         marginTop: 2,
-    },
-    menuArrow: {
-        fontSize: 24,
-        color: Colors.textSecondary,
     },
     divider: {
         height: 1,

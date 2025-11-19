@@ -15,6 +15,8 @@ import { Button } from '../components/common/Button';
 import { Colors, Spacing, FontSizes, BorderRadius, Shadows } from '../constants/theme';
 import { authAPI } from '../api/services';
 import { useAuth } from '../context/AuthContext';
+import { OAuthButtons } from '../components/auth/OAuthButtons';
+import { loginWithAlipay } from '../utils/alipay';
 
 export const RegisterScreen: React.FC<{ navigation: any }> = ({ navigation }) => {
   const insets = useSafeAreaInsets();
@@ -86,15 +88,16 @@ const handleRegister = async () => {
 
     console.log('注册响应:', response);
 
-    // 构建符合 gifted-chat User 类型的用户对象
+    // 构建符合 User 类型的用户对象
     const user = {
-      _id: response.userId || response.username, // gifted-chat 需要 _id
-      name: response.username,
-      avatar: undefined, // 可选
-      // 保留其他字段用于应用内使用
+      _id: response.userId || response.username,
       userId: response.userId,
       username: response.username,
+      nickname: response.nickname, // 添加昵称
+      name: response.nickname || response.username, // 显示用名称优先使用昵称
       email: response.email,
+      avatarUrl: response.avatarUrl,
+      avatar: response.avatarUrl,
       createdAt: response.createdAt,
     };
 
@@ -128,6 +131,61 @@ const handleRegister = async () => {
 // 返回登录页面
 const goToLogin = () => {
   navigation.goBack();
+};
+
+// 支付宝快捷注册/登录
+const handleAlipayRegister = async () => {
+  try {
+    setIsLoading(true);
+
+    // 1. 调用支付宝 SDK 获取 auth_code
+    const authCode = await loginWithAlipay();
+
+    // 2. 发送到后端（使用 OAuth 登录接口，后端会自动注册）
+    const response = await authAPI.oauthLogin({
+      oauthType: 'ALIPAY',
+      code: authCode,
+    });
+
+    console.log('支付宝注册响应:', response);
+
+    // 3. 构建用户对象
+    const user = {
+      _id: response.userId || response.username,
+      userId: response.userId,
+      username: response.username,
+      nickname: response.nickname,
+      name: response.nickname || response.username,
+      email: response.email,
+      avatarUrl: response.avatarUrl,
+      avatar: response.avatarUrl,
+      createdAt: response.createdAt,
+    };
+
+    // 4. 自动登录
+    const token = response.token || 'temp-token';
+    await login(user, token);
+
+    toast.success(`欢迎加入，${response.username}！`, '注册成功');
+  } catch (error: any) {
+    console.error('支付宝注册失败:', error);
+
+    // 用户取消不显示错误提示
+    if (error.message === 'USER_CANCEL') {
+      return;
+    }
+
+    let errorMessage = '支付宝注册失败';
+    if (error.message) {
+      errorMessage = error.message;
+    } else if (error.response?.data?.message) {
+      errorMessage = error.response.data.message;
+    }
+
+    toast.error(errorMessage, '注册失败');
+  } finally {
+    setIsLoading(false);
+  }
 };
 
 return (
@@ -207,6 +265,12 @@ return (
           style={styles.registerButton}
         />
       </View>
+
+      {/* 第三方快捷注册 */}
+      <OAuthButtons
+        onAlipay={handleAlipayRegister}
+        loading={isLoading}
+      />
 
       {/* 底部链接 */}
       <View style={styles.footer}>

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect } from 'react';
-import { User } from 'react-native-gifted-chat';
+import { User } from '../types/user';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { authAPI } from '../services/authAPI.ts';
 

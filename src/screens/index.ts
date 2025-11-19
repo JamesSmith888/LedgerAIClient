@@ -5,8 +5,6 @@ export { BottomTabNavigator } from '../navigation/BottomTabNavigator';
 
 export { GiftedChatScreen } from './GiftedChatScreen';
 
-export { TestScreen } from './TestScreen';
-
 export { AddTransactionScreen } from './AddTransactionScreen';
 
 export { LoginScreen } from './LoginScreen';
@@ -21,3 +19,13 @@ export { TransactionListScreen } from './TransactionListScreen';
 export { LedgerManagementScreen } from './LedgerManagementScreen';
 export { LedgerDetailScreen } from './LedgerDetailScreen';
 export { CreateLedgerScreen } from './CreateLedgerScreen';
+export { InviteMemberScreen } from './InviteMemberScreen';
+export { AcceptInviteScreen } from './AcceptInviteScreen';
+export { JoinByCodeScreen } from './JoinByCodeScreen';
+
+// 支付方式相关页面
+export { PaymentMethodManagementScreen } from './PaymentMethodManagementScreen';
+
+// 反馈相关页面
+export { FeedbackScreen } from './FeedbackScreen';
+export { SubmitFeedbackScreen } from './SubmitFeedbackScreen';
