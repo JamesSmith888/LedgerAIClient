@@ -7,6 +7,7 @@ import { View, Text, StyleSheet, Dimensions } from 'react-native';
 import { LineChart } from 'react-native-chart-kit';
 import { Colors, Spacing, FontSizes, FontWeights } from '../../constants/theme';
 import { CategoryIcon } from '../common/CategoryIcon';
+import { formatCurrency } from '../../utils/helpers';
 import type { StatisticsItem } from '../../types/report';
 
 interface CategoryLineChartProps {
@@ -67,8 +68,12 @@ export const CategoryLineChart: React.FC<CategoryLineChartProps> = ({
                 }}
                 width={width}
                 height={height}
-                yAxisLabel="¥"
+                yAxisLabel=""
                 yAxisSuffix=""
+                formatYLabel={(yValue) => {
+                    const value = parseFloat(yValue);
+                    return value === 0 ? '-' : `¥${value}`;
+                }}
                 chartConfig={chartConfig}
                 bezier
                 style={styles.chart}
@@ -95,7 +100,7 @@ export const CategoryLineChart: React.FC<CategoryLineChartProps> = ({
                             {item.label}
                         </Text>
                         <Text style={styles.legendValue}>
-                            ¥{item.amount.toFixed(2)}
+                            {formatCurrency(item.amount)}
                         </Text>
                         <Text style={styles.legendPercentage}>
                             {item.percentage.toFixed(1)}%

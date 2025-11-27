@@ -1,6 +1,3 @@
-/**
- * 编辑用户信息页面
- */
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -20,7 +17,7 @@ import { userAPI } from '../api/services/userAPI';
 
 export const EditProfileScreen: React.FC = () => {
   const navigation = useNavigation();
-  const { user } = useAuth();
+  const { user, updateUser } = useAuth();
   
   const [nickname, setNickname] = useState('');
   const [email, setEmail] = useState('');
@@ -52,10 +49,17 @@ export const EditProfileScreen: React.FC = () => {
     try {
       setIsSaving(true);
       
-      await userAPI.updateProfile({
+      const updatedProfile = await userAPI.updateProfile({
         nickname: nickname.trim() || undefined,
         email: email.trim() || undefined,
         avatarUrl: avatarUrl.trim() || undefined,
+      });
+      
+      // 更新 AuthContext 中的用户信息
+      await updateUser({
+        nickname: updatedProfile.nickname,
+        email: updatedProfile.email,
+        avatarUrl: updatedProfile.avatarUrl,
       });
       
       toast.success('保存成功');

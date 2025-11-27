@@ -9,6 +9,7 @@ export interface User {
     email?: string;
     avatarUrl?: string; // 头像URL
     avatar?: string;  // 兼容旧代码
+    role?: string;    // 用户角色：USER-普通用户，ADMIN-管理员
     createdAt?: string;
 }
 
@@ -35,6 +36,7 @@ export interface AuthResponse {
     email?: string;
     avatarUrl?: string;
     avatar?: string;
+    role?: string;    // 用户角色：USER-普通用户，ADMIN-管理员
     createdAt?: string;
 }
 

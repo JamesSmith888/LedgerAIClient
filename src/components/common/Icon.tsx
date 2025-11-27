@@ -169,6 +169,16 @@ export const AppIcons = {
   upload: 'cloud-upload',
   uploadOutline: 'cloud-upload-outline',
   
+  // 数据导出相关
+  codeSlash: 'code-slash',
+  gridOutline: 'grid-outline',
+  documentOutline: 'document-outline',
+  cloudUploadOutline: 'cloud-upload-outline',
+  cloudDownloadOutline: 'cloud-download-outline',
+  notificationsOutline: 'notifications-outline',
+  colorPaletteOutline: 'color-palette-outline',
+  informationCircleOutline: 'information-circle-outline',
+  
   // 邀请相关
   link: 'link',
   linkOutline: 'link-outline',
@@ -241,4 +251,8 @@ export const FeatherIcons = {
   menu: 'menu',
   star: 'star',
   heart: 'heart',
+  messageSquare: 'message-square',
+  messageCircle: 'message-circle',
+  thumbsUp: 'thumbs-up',
+  thumbsDown: 'thumbs-down',
 };

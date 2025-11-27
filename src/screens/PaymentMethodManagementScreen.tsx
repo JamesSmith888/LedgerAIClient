@@ -1,6 +1,7 @@
 /**
  * 支付方式管理页面
  * 管理用户的支付方式（查看、添加、编辑、删除、设置默认）
+ * 参考分类管理页面设计
  */
 import React, { useState } from 'react';
 import {
@@ -13,6 +14,9 @@ import {
   Modal,
   TextInput,
   Pressable,
+  KeyboardAvoidingView,
+  Platform,
+  Keyboard,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -154,11 +158,14 @@ export const PaymentMethodManagementScreen: React.FC = () => {
       {/* 头部导航 */}
       <View style={styles.header}>
         <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
-          <Text style={styles.backButtonText}>‹</Text>
+          <Icon name="arrow-back" size={24} color={Colors.text} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>支付方式管理</Text>
-        <TouchableOpacity style={styles.addButton} onPress={() => handleEdit()}>
-          <Text style={styles.addButtonText}>+</Text>
+        <TouchableOpacity
+          style={styles.headerAddButton}
+          onPress={() => handleEdit()}
+        >
+          <Icon name="add" size={24} color={Colors.primary} />
         </TouchableOpacity>
       </View>
 
@@ -170,11 +177,8 @@ export const PaymentMethodManagementScreen: React.FC = () => {
               name="card-outline" 
               size={64} 
               color={Colors.textLight}
-              style={styles.emptyIcon}
             />
             <Text style={styles.emptyText}>暂无支付方式</Text>
-            <Text style={styles.emptyHint}>点击下方按钮快速初始化</Text>
-            <Text style={styles.emptyHintSecondary}>或点击右上角"+"手动添加</Text>
             <TouchableOpacity
               style={styles.initButton}
               onPress={handleInitDefaults}
@@ -227,21 +231,18 @@ export const PaymentMethodManagementScreen: React.FC = () => {
                   <TouchableOpacity
                     style={styles.actionButton}
                     onPress={() => handleEdit(method)}
+                    activeOpacity={0.7}
                   >
-                    <Text style={styles.actionButtonText}>编辑</Text>
+                    <Icon name="create-outline" size={20} color={Colors.primary} />
                   </TouchableOpacity>
                   {!method.isDefault && (
-                    <>
-                      <View style={styles.actionDivider} />
-                      <TouchableOpacity
-                        style={styles.actionButton}
-                        onPress={() => handleDelete(method)}
-                      >
-                        <Text style={[styles.actionButtonText, styles.actionButtonTextDanger]}>
-                          删除
-                        </Text>
-                      </TouchableOpacity>
-                    </>
+                    <TouchableOpacity
+                      style={styles.actionButton}
+                      onPress={() => handleDelete(method)}
+                      activeOpacity={0.7}
+                    >
+                      <Icon name="trash-outline" size={20} color={Colors.error} />
+                    </TouchableOpacity>
                   )}
                 </View>
               </View>
@@ -250,35 +251,57 @@ export const PaymentMethodManagementScreen: React.FC = () => {
         )}
       </ScrollView>
 
-      {/* 编辑/新增模态框 */}
+      {/* 编辑/新增全屏页面 */}
       <Modal
         visible={showEditModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowEditModal(false)}
+        transparent={false}
+        animationType="slide"
+        onRequestClose={() => {
+          Keyboard.dismiss();
+          setShowEditModal(false);
+        }}
       >
-        <Pressable style={styles.modalOverlay} onPress={() => setShowEditModal(false)}>
-          <Pressable style={styles.modalContent} onPress={e => e.stopPropagation()}>
-            <Text style={styles.modalTitle}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={[styles.fullScreenContainer, { paddingTop: insets.top }]}
+        >
+          {/* 页面头部 */}
+          <View style={styles.editHeader}>
+            <TouchableOpacity
+              style={styles.editBackButton}
+              onPress={() => setShowEditModal(false)}
+            >
+              <Icon name="arrow-back" size={24} color={Colors.text} />
+            </TouchableOpacity>
+            <Text style={styles.editHeaderTitle}>
               {editingMethod ? '编辑支付方式' : '新增支付方式'}
             </Text>
+            <View style={styles.editHeaderRight} />
+          </View>
 
+          {/* 表单内容 */}
+          <ScrollView
+            style={styles.editScrollView}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.editScrollViewContent}
+          >
             {/* 名称输入 */}
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>名称</Text>
+            <View style={styles.formGroup}>
+              <Text style={styles.formLabel}>名称 *</Text>
               <TextInput
-                style={styles.input}
-                placeholder="请输入名称"
+                style={styles.formInput}
+                placeholder="请输入支付方式名称"
                 placeholderTextColor={Colors.textLight}
                 value={editName}
                 onChangeText={setEditName}
+                maxLength={50}
               />
             </View>
 
             {/* 图标选择 */}
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>图标</Text>
-              <View style={styles.iconSelector}>
+            <View style={styles.formGroup}>
+              <Text style={styles.formLabel}>选择图标 *</Text>
+              <View style={styles.iconGrid}>
                 {PAYMENT_METHOD_TYPES.map(item => (
                   <TouchableOpacity
                     key={item.type}
@@ -290,39 +313,43 @@ export const PaymentMethodManagementScreen: React.FC = () => {
                       setEditIconName(item.iconName);
                       setEditType(item.type);
                     }}
+                    activeOpacity={0.7}
                   >
                     <PaymentIcon 
                       type={item.type}
                       iconName={item.iconName} 
-                      size={24}
+                      size={32}
                     />
+                    <Text style={styles.iconOptionLabel}>{item.name}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
             </View>
+          </ScrollView>
 
-            {/* 按钮组 */}
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalButtonCancel]}
-                onPress={() => setShowEditModal(false)}
-              >
-                <Text style={styles.modalButtonTextCancel}>取消</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalButtonConfirm]}
-                onPress={handleSave}
-                disabled={isLoading}
-              >
-                {isLoading ? (
-                  <ActivityIndicator color={Colors.surface} size="small" />
-                ) : (
-                  <Text style={styles.modalButtonTextConfirm}>保存</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </Pressable>
-        </Pressable>
+          {/* 底部按钮 */}
+          <View style={[styles.editFooter, { paddingBottom: insets.bottom + Spacing.md }]}>
+            <TouchableOpacity
+              style={styles.cancelButton}
+              onPress={() => setShowEditModal(false)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.cancelButtonText}>取消</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.saveButton, isLoading && styles.saveButtonDisabled]}
+              onPress={handleSave}
+              disabled={isLoading}
+              activeOpacity={0.8}
+            >
+              {isLoading ? (
+                <ActivityIndicator color={Colors.surface} />
+              ) : (
+                <Text style={styles.saveButtonText}>保存</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* 全局加载指示器 */}
@@ -340,107 +367,64 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.background,
   },
+
+  // 头部
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
     backgroundColor: Colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    ...Shadows.sm,
+    zIndex: 10,
   },
   backButton: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  backButtonText: {
-    fontSize: 32,
-    color: Colors.text,
-    fontWeight: '300',
+    padding: Spacing.xs,
+    marginLeft: -Spacing.xs,
   },
   headerTitle: {
-    fontSize: FontSizes.lg,
+    fontSize: FontSizes.xl,
     fontWeight: FontWeights.bold,
     color: Colors.text,
   },
-  addButton: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: Colors.primary,
-    borderRadius: BorderRadius.md,
+  headerAddButton: {
+    padding: Spacing.xs,
+    marginRight: -Spacing.xs,
   },
-  addButtonText: {
-    fontSize: 24,
-    color: Colors.surface,
-    fontWeight: '300',
-  },
+
+  // 列表
   scrollView: {
     flex: 1,
   },
-  emptyContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: Spacing.xxl * 2,
-  },
-  emptyIcon: {
-    marginBottom: Spacing.md,
-  },
-  emptyText: {
-    fontSize: FontSizes.lg,
-    color: Colors.textSecondary,
-    marginBottom: Spacing.xs,
-  },
-  emptyHint: {
-    fontSize: FontSizes.sm,
-    color: Colors.textLight,
-    marginBottom: Spacing.lg,
-  },
-  emptyHintSecondary: {
-    fontSize: FontSizes.xs,
-    color: Colors.textLight,
-    marginTop: Spacing.md,
-  },
-  initButton: {
-    backgroundColor: Colors.primary,
-    paddingHorizontal: Spacing.xl,
-    paddingVertical: Spacing.md,
-    borderRadius: BorderRadius.lg,
-    minWidth: 200,
-    alignItems: 'center',
-    ...Shadows.md,
-  },
-  initButtonText: {
-    fontSize: FontSizes.md,
-    color: Colors.surface,
-    fontWeight: FontWeights.semibold,
-  },
   listContainer: {
-    padding: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.md,
+    paddingBottom: Spacing.xl,
   },
   methodCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     backgroundColor: Colors.surface,
     borderRadius: BorderRadius.lg,
+    padding: Spacing.md,
     marginBottom: Spacing.md,
-    overflow: 'hidden',
     ...Shadows.sm,
   },
   methodContent: {
-    padding: Spacing.md,
+    flex: 1,
   },
   methodLeft: {
     flexDirection: 'row',
     alignItems: 'center',
+    flex: 1,
   },
   methodIconContainer: {
-    width: 50,
-    height: 50,
-    borderRadius: BorderRadius.lg,
-    backgroundColor: Colors.background,
+    width: 48,
+    height: 48,
+    borderRadius: BorderRadius.xl,
+    backgroundColor: Colors.backgroundSecondary,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: Spacing.md,
@@ -457,81 +441,140 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.xs,
   },
   methodName: {
-    fontSize: FontSizes.lg,
+    fontSize: FontSizes.md,
     fontWeight: FontWeights.semibold,
     color: Colors.text,
     marginRight: Spacing.sm,
   },
   defaultBadge: {
+    alignSelf: 'flex-start',
     backgroundColor: Colors.primary + '15',
     paddingHorizontal: Spacing.sm,
     paddingVertical: 2,
     borderRadius: BorderRadius.sm,
   },
   defaultBadgeText: {
-    fontSize: 11,
+    fontSize: FontSizes.xs,
     color: Colors.primary,
-    fontWeight: FontWeights.semibold,
+    fontWeight: FontWeights.medium,
   },
   methodType: {
     fontSize: FontSizes.sm,
     color: Colors.textSecondary,
+    marginTop: 2,
   },
   methodActions: {
     flexDirection: 'row',
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
+    gap: Spacing.sm,
   },
   actionButton: {
-    flex: 1,
-    paddingVertical: Spacing.sm,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.backgroundSecondary,
     alignItems: 'center',
-  },
-  actionButtonText: {
-    fontSize: FontSizes.md,
-    color: Colors.primary,
-    fontWeight: FontWeights.medium,
-  },
-  actionButtonTextDanger: {
-    color: Colors.expense,
-  },
-  actionDivider: {
-    width: 1,
-    backgroundColor: Colors.border,
+    justifyContent: 'center',
   },
 
-  // 模态框样式
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
+  // 空状态
+  emptyContainer: {
     alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.xxl * 2,
   },
-  modalContent: {
-    width: '85%',
+  emptyText: {
+    fontSize: FontSizes.lg,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.md,
+  },
+  initButton: {
+    backgroundColor: Colors.primary,
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    marginTop: Spacing.md,
+    alignItems: 'center',
+    ...Shadows.md,
+  },
+  initButtonText: {
+    fontSize: FontSizes.md,
+    color: Colors.surface,
+    fontWeight: FontWeights.semibold,
+  },
+
+  // 全屏编辑模式
+  fullScreenContainer: {
+    flex: 1,
+    backgroundColor: Colors.background,
+  },
+  editHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
     backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.xl,
-    padding: Spacing.lg,
-    ...Shadows.lg,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
   },
-  modalTitle: {
+  editBackButton: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editHeaderTitle: {
     fontSize: FontSizes.xl,
     fontWeight: FontWeights.bold,
     color: Colors.text,
-    marginBottom: Spacing.lg,
-    textAlign: 'center',
   },
-  inputGroup: {
-    marginBottom: Spacing.md,
+  editHeaderRight: {
+    width: 40,
   },
-  inputLabel: {
-    fontSize: FontSizes.md,
+  editScrollView: {
+    flex: 1,
+  },
+  editScrollViewContent: {
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+  },
+  editFooter: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.md,
+    backgroundColor: Colors.surface,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  cancelButton: {
+    flex: 1,
+    borderRadius: BorderRadius.lg,
+    paddingVertical: Spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.backgroundSecondary,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  cancelButtonText: {
+    fontSize: FontSizes.lg,
+    fontWeight: FontWeights.bold,
     color: Colors.text,
-    marginBottom: Spacing.xs,
-    fontWeight: FontWeights.medium,
   },
-  input: {
-    backgroundColor: Colors.background,
+
+  // 表单
+  formGroup: {
+    marginBottom: Spacing.lg,
+  },
+  formLabel: {
+    fontSize: FontSizes.md,
+    fontWeight: FontWeights.semibold,
+    color: Colors.text,
+    marginBottom: Spacing.sm,
+  },
+  formInput: {
+    backgroundColor: Colors.backgroundSecondary,
     borderRadius: BorderRadius.md,
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.sm,
@@ -540,52 +583,56 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
   },
-  iconSelector: {
+
+  // 图标选择
+  iconGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Spacing.sm,
   },
   iconOption: {
-    width: 50,
-    height: 50,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: Colors.background,
+    width: 'auto',
+    flex: 1,
+    minWidth: 80,
     borderRadius: BorderRadius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.backgroundSecondary,
     borderWidth: 2,
     borderColor: 'transparent',
+    paddingVertical: Spacing.md,
   },
   iconOptionSelected: {
     borderColor: Colors.primary,
     backgroundColor: Colors.primary + '10',
   },
-  modalButtons: {
-    flexDirection: 'row',
-    gap: Spacing.md,
-    marginTop: Spacing.md,
+  iconOptionLabel: {
+    fontSize: FontSizes.xs,
+    color: Colors.text,
+    marginTop: Spacing.xs,
+    textAlign: 'center',
   },
-  modalButton: {
+
+  // 底部按钮
+  saveButton: {
     flex: 1,
-    paddingVertical: Spacing.md,
-    borderRadius: BorderRadius.md,
-    alignItems: 'center',
-  },
-  modalButtonCancel: {
-    backgroundColor: Colors.background,
-  },
-  modalButtonConfirm: {
     backgroundColor: Colors.primary,
+    borderRadius: BorderRadius.lg,
+    paddingVertical: Spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...Shadows.md,
   },
-  modalButtonTextCancel: {
-    fontSize: FontSizes.md,
-    color: Colors.textSecondary,
-    fontWeight: FontWeights.medium,
+  saveButtonDisabled: {
+    opacity: 0.6,
   },
-  modalButtonTextConfirm: {
-    fontSize: FontSizes.md,
+  saveButtonText: {
+    fontSize: FontSizes.lg,
+    fontWeight: FontWeights.bold,
     color: Colors.surface,
-    fontWeight: FontWeights.semibold,
   },
+
+  // 加载状态
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0, 0, 0, 0.3)',

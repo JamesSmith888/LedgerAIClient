@@ -42,3 +42,15 @@ export const delay = (ms: number): Promise<void> => {
 export const formatNumber = (num: number): string => {
   return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 };
+
+/**
+ * 格式化金额
+ * 0 显示为 -
+ * 其他显示为 ¥0.00 格式
+ * @param amount 金额
+ * @returns 格式化后的字符串
+ */
+export const formatCurrency = (amount: number): string => {
+  if (Math.abs(amount) < 0.001) return '-';
+  return `¥${amount.toFixed(2)}`;
+};

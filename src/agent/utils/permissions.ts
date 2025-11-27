@@ -1,0 +1,843 @@
+/**
+ * 工具权限管理
+ * 定义工具风险级别和确认规则
+ */
+
+// ============ 权限类型定义 ============
+
+/**
+ * 风险级别
+ * - low: 只读操作，无副作用
+ * - medium: 可逆的写操作
+ * - high: 难以逆转的操作
+ * - critical: 不可逆的危险操作
+ */
+export type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
+
+/**
+ * 操作类型
+ */
+export type OperationType = 'read' | 'write' | 'delete' | 'admin';
+
+/**
+ * 工具权限配置
+ */
+export interface ToolPermission {
+  toolName: string;
+  riskLevel: RiskLevel;
+  operationType: OperationType;
+  description: string;
+  confirmationMessage?: string;  // 自定义确认提示
+  requiresExplicitConfirmation: boolean;  // 是否需要明确确认
+  cooldownMs?: number;  // 连续调用冷却时间
+  maxCallsPerMinute?: number;  // 每分钟最大调用次数
+}
+
+/**
+ * 确认请求
+ */
+export interface ConfirmationRequest {
+  id: string;
+  toolName: string;
+  toolArgs: Record<string, unknown>;
+  riskLevel: RiskLevel;
+  message: string;
+  details: string[];
+  timestamp: number;
+  expiresAt: number;  // 确认请求过期时间
+  callback: {
+    onConfirm: () => void;
+    onReject: (reason?: string) => void;
+    onModify?: (modifiedArgs: Record<string, unknown>) => void;
+  };
+}
+
+// ============ 默认权限配置 ============
+
+/**
+ * 工具权限注册表
+ */
+const toolPermissionRegistry: Map<string, ToolPermission> = new Map();
+
+/**
+ * 默认工具权限配置
+ */
+const defaultPermissions: ToolPermission[] = [
+  // ============ Context 工具 - 低风险 ============
+  {
+    toolName: 'get_user_info',
+    riskLevel: 'low',
+    operationType: 'read',
+    description: '获取当前用户信息',
+    requiresExplicitConfirmation: false,
+  },
+  {
+    toolName: 'get_current_ledger',
+    riskLevel: 'low',
+    operationType: 'read',
+    description: '获取当前账本信息',
+    requiresExplicitConfirmation: false,
+  },
+  {
+    toolName: 'get_all_ledgers',
+    riskLevel: 'low',
+    operationType: 'read',
+    description: '获取所有账本列表',
+    requiresExplicitConfirmation: false,
+  },
+  {
+    toolName: 'get_full_context',
+    riskLevel: 'low',
+    operationType: 'read',
+    description: '获取完整上下文（用户、账本、分类等）',
+    requiresExplicitConfirmation: false,
+  },
+  // ============ 查询工具 - 低风险 ============
+  {
+    toolName: 'query_transactions',
+    riskLevel: 'low',
+    operationType: 'read',
+    description: '查询交易记录',
+    requiresExplicitConfirmation: false,
+  },
+  {
+    toolName: 'get_categories',
+    riskLevel: 'low',
+    operationType: 'read',
+    description: '获取分类列表',
+    requiresExplicitConfirmation: false,
+  },
+  {
+    toolName: 'get_statistics',
+    riskLevel: 'low',
+    operationType: 'read',
+    description: '获取统计数据',
+    requiresExplicitConfirmation: false,
+  },
+  {
+    toolName: 'get_statistics_report',
+    riskLevel: 'low',
+    operationType: 'read',
+    description: '获取详细统计报表',
+    requiresExplicitConfirmation: false,
+  },
+  {
+    toolName: 'get_accounts',
+    riskLevel: 'low',
+    operationType: 'read',
+    description: '获取账户列表',
+    requiresExplicitConfirmation: false,
+  },
+  {
+    toolName: 'get_budgets',
+    riskLevel: 'low',
+    operationType: 'read',
+    description: '获取预算信息',
+    requiresExplicitConfirmation: false,
+  },
+  {
+    toolName: 'get_agent_categories',
+    riskLevel: 'low',
+    operationType: 'read',
+    description: '获取分类列表（Agent专用）',
+    requiresExplicitConfirmation: false,
+  },
+  {
+    toolName: 'get_agent_payment_methods',
+    riskLevel: 'low',
+    operationType: 'read',
+    description: '获取支付方式列表',
+    requiresExplicitConfirmation: false,
+  },
+  {
+    toolName: 'get_ledger_detail',
+    riskLevel: 'low',
+    operationType: 'read',
+    description: '获取账本详情',
+    requiresExplicitConfirmation: false,
+  },
+  {
+    toolName: 'search_category',
+    riskLevel: 'low',
+    operationType: 'read',
+    description: '搜索分类',
+    requiresExplicitConfirmation: false,
+  },
+  {
+    toolName: 'get_payment_methods',
+    riskLevel: 'low',
+    operationType: 'read',
+    description: '获取支付方式列表',
+    requiresExplicitConfirmation: false,
+  },
+  {
+    toolName: 'get_transaction_detail',
+    riskLevel: 'low',
+    operationType: 'read',
+    description: '获取交易详情',
+    requiresExplicitConfirmation: false,
+  },
+  {
+    toolName: 'query_agent_transactions',
+    riskLevel: 'low',
+    operationType: 'read',
+    description: '查询交易记录（Agent专用）',
+    requiresExplicitConfirmation: false,
+  },
+  {
+    toolName: 'search_transactions',
+    riskLevel: 'low',
+    operationType: 'read',
+    description: '搜索交易记录',
+    requiresExplicitConfirmation: false,
+  },
+  {
+    toolName: 'get_recent_transactions',
+    riskLevel: 'low',
+    operationType: 'read',
+    description: '获取最近交易记录',
+    requiresExplicitConfirmation: false,
+  },
+  // ============ 渲染工具 - 低风险 ============
+  {
+    toolName: 'render_transaction_list',
+    riskLevel: 'low',
+    operationType: 'read',
+    description: '渲染交易列表',
+    requiresExplicitConfirmation: false,
+  },
+  {
+    toolName: 'render_transaction_detail',
+    riskLevel: 'low',
+    operationType: 'read',
+    description: '渲染交易详情',
+    requiresExplicitConfirmation: false,
+  },
+  {
+    toolName: 'render_statistics_card',
+    riskLevel: 'low',
+    operationType: 'read',
+    description: '渲染统计卡片',
+    requiresExplicitConfirmation: false,
+  },
+  {
+    toolName: 'render_action_buttons',
+    riskLevel: 'low',
+    operationType: 'read',
+    description: '渲染操作按钮',
+    requiresExplicitConfirmation: false,
+  },
+  
+  // ============ 写入操作 - 中等风险 ============
+  {
+    toolName: 'add_transaction',
+    riskLevel: 'medium',
+    operationType: 'write',
+    description: '添加交易记录',
+    requiresExplicitConfirmation: false,
+    maxCallsPerMinute: 30,
+  },
+  {
+    toolName: 'create_transaction',
+    riskLevel: 'medium',
+    operationType: 'write',
+    description: '创建交易记录',
+    requiresExplicitConfirmation: false,
+    maxCallsPerMinute: 30,
+  },
+  {
+    toolName: 'update_transaction',
+    riskLevel: 'medium',
+    operationType: 'write',
+    description: '修改交易记录',
+    confirmationMessage: '确认要修改这条交易记录吗？',
+    requiresExplicitConfirmation: true,
+  },
+  {
+    toolName: 'add_category',
+    riskLevel: 'medium',
+    operationType: 'write',
+    description: '添加分类',
+    requiresExplicitConfirmation: false,
+  },
+  {
+    toolName: 'create_category',
+    riskLevel: 'medium',
+    operationType: 'write',
+    description: '创建分类',
+    requiresExplicitConfirmation: false,
+  },
+  {
+    toolName: 'add_account',
+    riskLevel: 'medium',
+    operationType: 'write',
+    description: '添加账户',
+    requiresExplicitConfirmation: false,
+  },
+  {
+    toolName: 'create_payment_method',
+    riskLevel: 'medium',
+    operationType: 'write',
+    description: '创建支付方式',
+    requiresExplicitConfirmation: false,
+  },
+  
+  // 批量写入 - 高风险
+  {
+    toolName: 'batch_add_transactions',
+    riskLevel: 'high',
+    operationType: 'write',
+    description: '批量添加交易记录',
+    confirmationMessage: '即将批量添加多条交易记录，确认执行吗？',
+    requiresExplicitConfirmation: true,
+    maxCallsPerMinute: 5,
+  },
+  {
+    toolName: 'batch_create_transactions',
+    riskLevel: 'high',
+    operationType: 'write',
+    description: '批量创建交易记录',
+    confirmationMessage: '即将批量创建多条交易记录，确认执行吗？',
+    requiresExplicitConfirmation: true,
+    maxCallsPerMinute: 5,
+  },
+  {
+    toolName: 'batch_update_transactions',
+    riskLevel: 'high',
+    operationType: 'write',
+    description: '批量修改交易记录',
+    confirmationMessage: '即将批量修改交易记录，确认执行吗？',
+    requiresExplicitConfirmation: true,
+    maxCallsPerMinute: 5,
+  },
+
+  // 删除操作 - 高风险
+  {
+    toolName: 'delete_transaction',
+    riskLevel: 'high',
+    operationType: 'delete',
+    description: '删除交易记录',
+    confirmationMessage: '删除后无法恢复，确认要删除吗？',
+    requiresExplicitConfirmation: true,
+    cooldownMs: 2000,
+  },
+  {
+    toolName: 'delete_category',
+    riskLevel: 'high',
+    operationType: 'delete',
+    description: '删除分类',
+    confirmationMessage: '删除分类可能影响关联的交易记录，确认删除吗？',
+    requiresExplicitConfirmation: true,
+  },
+
+  // 批量删除 - 关键风险
+  {
+    toolName: 'batch_delete_transactions',
+    riskLevel: 'critical',
+    operationType: 'delete',
+    description: '批量删除交易记录',
+    confirmationMessage: '⚠️ 危险操作：即将批量删除交易记录，此操作不可撤销！',
+    requiresExplicitConfirmation: true,
+    cooldownMs: 5000,
+    maxCallsPerMinute: 2,
+  },
+  {
+    toolName: 'clear_all_data',
+    riskLevel: 'critical',
+    operationType: 'admin',
+    description: '清空所有数据',
+    confirmationMessage: '⚠️ 极度危险：将删除所有数据，此操作完全不可恢复！',
+    requiresExplicitConfirmation: true,
+    cooldownMs: 10000,
+    maxCallsPerMinute: 1,
+  },
+  
+  // ============ 领域聚合工具 ============
+  {
+    toolName: 'transaction',
+    riskLevel: 'medium',
+    operationType: 'write',
+    description: '交易管理（查询/创建/更新/删除/统计）',
+    requiresExplicitConfirmation: false,  // 内部根据 action 判断
+  },
+  {
+    toolName: 'category',
+    riskLevel: 'low',
+    operationType: 'read',
+    description: '分类管理（查询/搜索/创建）',
+    requiresExplicitConfirmation: false,
+  },
+  {
+    toolName: 'payment_method',
+    riskLevel: 'low',
+    operationType: 'read',
+    description: '支付方式管理（查询/创建）',
+    requiresExplicitConfirmation: false,
+  },
+  {
+    toolName: 'context',
+    riskLevel: 'low',
+    operationType: 'read',
+    description: '获取上下文信息',
+    requiresExplicitConfirmation: false,
+  },
+];
+
+// 初始化默认权限
+defaultPermissions.forEach(p => toolPermissionRegistry.set(p.toolName, p));
+
+// ============ 权限管理函数 ============
+
+/**
+ * 获取工具权限配置
+ */
+export function getToolPermission(toolName: string): ToolPermission {
+  const permission = toolPermissionRegistry.get(toolName);
+  
+  if (permission) {
+    return permission;
+  }
+
+  // 返回默认权限（未知工具默认为中等风险）
+  return {
+    toolName,
+    riskLevel: 'medium',
+    operationType: 'write',
+    description: `未知工具: ${toolName}`,
+    requiresExplicitConfirmation: true,  // 未知工具需要确认
+  };
+}
+
+/**
+ * 注册工具权限
+ */
+export function registerToolPermission(permission: ToolPermission): void {
+  toolPermissionRegistry.set(permission.toolName, permission);
+}
+
+/**
+ * 批量注册工具权限
+ */
+export function registerToolPermissions(permissions: ToolPermission[]): void {
+  permissions.forEach(p => toolPermissionRegistry.set(p.toolName, p));
+}
+
+/**
+ * 检查工具是否需要确认
+ */
+export function requiresConfirmation(permission: ToolPermission): boolean {
+  // 明确标记需要确认
+  if (permission.requiresExplicitConfirmation) {
+    return true;
+  }
+
+  // 高风险和关键风险默认需要确认
+  if (permission.riskLevel === 'high' || permission.riskLevel === 'critical') {
+    return true;
+  }
+
+  // 删除操作默认需要确认
+  if (permission.operationType === 'delete') {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * 检查是否为只读操作
+ */
+export function isReadOnly(toolName: string): boolean {
+  const permission = getToolPermission(toolName);
+  return permission.operationType === 'read';
+}
+
+/**
+ * 检查是否为危险操作
+ */
+export function isDangerous(toolName: string): boolean {
+  const permission = getToolPermission(toolName);
+  return permission.riskLevel === 'high' || permission.riskLevel === 'critical';
+}
+
+/**
+ * 获取所有已注册的权限
+ */
+export function getAllPermissions(): ToolPermission[] {
+  return Array.from(toolPermissionRegistry.values());
+}
+
+// ============ 确认请求管理 ============
+
+/**
+ * 创建确认请求
+ */
+export function createConfirmationRequest(
+  toolName: string,
+  toolArgs: Record<string, unknown>,
+  callbacks: ConfirmationRequest['callback']
+): ConfirmationRequest {
+  const permission = getToolPermission(toolName);
+  
+  const details: string[] = [];
+  
+  // 根据工具类型生成详情
+  if (toolArgs) {
+    for (const [key, value] of Object.entries(toolArgs)) {
+      if (value !== undefined && value !== null) {
+        details.push(`${formatArgName(key)}: ${formatArgValue(value)}`);
+      }
+    }
+  }
+
+  return {
+    id: `confirm_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    toolName,
+    toolArgs,
+    riskLevel: permission.riskLevel,
+    message: permission.confirmationMessage || `确认执行 ${permission.description}？`,
+    details,
+    timestamp: Date.now(),
+    expiresAt: Date.now() + 5 * 60 * 1000,  // 5分钟过期
+    callback: callbacks,
+  };
+}
+
+/**
+ * 格式化参数名
+ */
+function formatArgName(name: string): string {
+  const nameMap: Record<string, string> = {
+    amount: '金额',
+    description: '描述',
+    category: '分类',
+    categoryId: '分类',
+    date: '日期',
+    type: '类型',
+    accountId: '账户',
+    id: 'ID',
+    ids: 'ID列表',
+    startDate: '开始日期',
+    endDate: '结束日期',
+  };
+  return nameMap[name] || name;
+}
+
+/**
+ * 格式化参数值
+ */
+function formatArgValue(value: unknown): string {
+  if (typeof value === 'number') {
+    return value.toLocaleString();
+  }
+  if (Array.isArray(value)) {
+    if (value.length > 3) {
+      return `[${value.slice(0, 3).join(', ')}... 共${value.length}项]`;
+    }
+    return `[${value.join(', ')}]`;
+  }
+  if (typeof value === 'object' && value !== null) {
+    return JSON.stringify(value).slice(0, 50) + '...';
+  }
+  return String(value);
+}
+
+// ============ 始终允许管理 ============
+
+/**
+ * 用户已设置为"始终允许"的工具集合
+ * 这些工具将跳过确认弹窗
+ */
+const alwaysAllowedTools: Set<string> = new Set();
+
+/**
+ * 设置工具为"始终允许"
+ * @param toolName 工具名称
+ */
+export function setToolAlwaysAllowed(toolName: string): void {
+  alwaysAllowedTools.add(toolName);
+  console.log(`✅ [Permissions] Tool "${toolName}" set to always allowed`);
+}
+
+/**
+ * 移除工具的"始终允许"设置
+ * @param toolName 工具名称
+ */
+export function removeToolAlwaysAllowed(toolName: string): void {
+  alwaysAllowedTools.delete(toolName);
+  console.log(`🔄 [Permissions] Tool "${toolName}" removed from always allowed`);
+}
+
+/**
+ * 检查工具是否已设置为"始终允许"
+ * @param toolName 工具名称
+ */
+export function isToolAlwaysAllowed(toolName: string): boolean {
+  return alwaysAllowedTools.has(toolName);
+}
+
+/**
+ * 获取所有"始终允许"的工具名称
+ */
+export function getAllAlwaysAllowedTools(): string[] {
+  return Array.from(alwaysAllowedTools);
+}
+
+/**
+ * 重置所有"始终允许"设置
+ */
+export function resetAllAlwaysAllowed(): void {
+  alwaysAllowedTools.clear();
+  console.log('🔄 [Permissions] All always allowed settings cleared');
+}
+
+// ============ 调用频率限制 ============
+
+interface CallRecord {
+  toolName: string;
+  timestamp: number;
+}
+
+const callHistory: CallRecord[] = [];
+const MAX_HISTORY_SIZE = 1000;
+
+/**
+ * 记录工具调用
+ */
+export function recordToolCall(toolName: string): void {
+  callHistory.push({
+    toolName,
+    timestamp: Date.now(),
+  });
+
+  // 清理旧记录
+  if (callHistory.length > MAX_HISTORY_SIZE) {
+    const cutoff = Date.now() - 60000;  // 保留最近1分钟
+    const index = callHistory.findIndex(r => r.timestamp > cutoff);
+    if (index > 0) {
+      callHistory.splice(0, index);
+    }
+  }
+}
+
+/**
+ * 检查是否超过调用频率限制
+ */
+export function checkRateLimit(toolName: string): {
+  allowed: boolean;
+  remainingCalls?: number;
+  resetInMs?: number;
+} {
+  const permission = getToolPermission(toolName);
+  
+  if (!permission.maxCallsPerMinute) {
+    return { allowed: true };
+  }
+
+  const oneMinuteAgo = Date.now() - 60000;
+  const recentCalls = callHistory.filter(
+    r => r.toolName === toolName && r.timestamp > oneMinuteAgo
+  );
+
+  const allowed = recentCalls.length < permission.maxCallsPerMinute;
+  const remainingCalls = Math.max(0, permission.maxCallsPerMinute - recentCalls.length);
+  
+  // 计算重置时间
+  let resetInMs = 0;
+  if (!allowed && recentCalls.length > 0) {
+    const oldestCall = recentCalls[0];
+    resetInMs = oldestCall.timestamp + 60000 - Date.now();
+  }
+
+  return {
+    allowed,
+    remainingCalls,
+    resetInMs,
+  };
+}
+
+/**
+ * 检查冷却时间
+ */
+export function checkCooldown(toolName: string): {
+  allowed: boolean;
+  remainingMs?: number;
+} {
+  const permission = getToolPermission(toolName);
+  
+  if (!permission.cooldownMs) {
+    return { allowed: true };
+  }
+
+  const lastCall = [...callHistory]
+    .reverse()
+    .find(r => r.toolName === toolName);
+
+  if (!lastCall) {
+    return { allowed: true };
+  }
+
+  const elapsed = Date.now() - lastCall.timestamp;
+  const allowed = elapsed >= permission.cooldownMs;
+
+  return {
+    allowed,
+    remainingMs: allowed ? 0 : permission.cooldownMs - elapsed,
+  };
+}
+
+// ============ 权限检查组合 ============
+
+export interface PermissionCheckResult {
+  allowed: boolean;
+  requiresConfirmation: boolean;
+  blockReason?: string;
+  warnings: string[];
+}
+
+/**
+ * 根据领域工具的 action 获取动态权限配置
+ * 用于 transaction 等聚合工具，根据具体操作判断风险级别
+ */
+function getDynamicPermissionForDomainTool(
+  toolName: string,
+  toolArgs?: Record<string, unknown>
+): ToolPermission | null {
+  // 只处理领域聚合工具
+  if (toolName !== 'transaction') {
+    return null;
+  }
+
+  const action = toolArgs?.action as string | undefined;
+  if (!action) {
+    return null;
+  }
+
+  // 根据 action 返回对应的权限配置
+  switch (action) {
+    case 'query':
+    case 'get':
+    case 'statistics':
+      return {
+        toolName: `transaction.${action}`,
+        riskLevel: 'low',
+        operationType: 'read',
+        description: '查询交易记录',
+        requiresExplicitConfirmation: false,
+      };
+
+    case 'create':
+      return {
+        toolName: `transaction.${action}`,
+        riskLevel: 'medium',
+        operationType: 'write',
+        description: '创建交易记录',
+        confirmationMessage: '确认要创建这条交易记录吗？',
+        requiresExplicitConfirmation: true, // 创建需要确认
+      };
+
+    case 'update':
+      return {
+        toolName: `transaction.${action}`,
+        riskLevel: 'medium',
+        operationType: 'write',
+        description: '更新交易记录',
+        confirmationMessage: '确认要修改这条交易记录吗？',
+        requiresExplicitConfirmation: true, // 更新需要确认
+      };
+
+    case 'delete':
+      return {
+        toolName: `transaction.${action}`,
+        riskLevel: 'high',
+        operationType: 'delete',
+        description: '删除交易记录',
+        confirmationMessage: '删除后无法恢复，确认要删除吗？',
+        requiresExplicitConfirmation: true,
+        cooldownMs: 2000,
+      };
+
+    case 'batch_create':
+      const itemCount = (toolArgs?.items as any[])?.length || 0;
+      return {
+        toolName: `transaction.${action}`,
+        riskLevel: 'high',
+        operationType: 'write',
+        description: `批量创建 ${itemCount} 条交易记录`,
+        confirmationMessage: `即将批量创建 ${itemCount} 条交易记录，确认执行吗？`,
+        requiresExplicitConfirmation: true,
+        maxCallsPerMinute: 5,
+      };
+
+    default:
+      return null;
+  }
+}
+
+/**
+ * 综合权限检查
+ */
+export function checkToolPermission(
+  toolName: string,
+  toolArgs?: Record<string, unknown>
+): PermissionCheckResult {
+  // 尝试获取动态权限（领域聚合工具）
+  const dynamicPermission = getDynamicPermissionForDomainTool(toolName, toolArgs);
+  const permission = dynamicPermission || getToolPermission(toolName);
+  
+  const warnings: string[] = [];
+  let allowed = true;
+  let blockReason: string | undefined;
+
+  // 检查频率限制
+  const rateCheck = checkRateLimit(toolName);
+  if (!rateCheck.allowed) {
+    allowed = false;
+    blockReason = `调用过于频繁，请${Math.ceil((rateCheck.resetInMs || 0) / 1000)}秒后重试`;
+  }
+
+  // 检查冷却时间
+  const cooldownCheck = checkCooldown(toolName);
+  if (!cooldownCheck.allowed) {
+    allowed = false;
+    blockReason = `操作冷却中，请${Math.ceil((cooldownCheck.remainingMs || 0) / 1000)}秒后重试`;
+  }
+
+  // 风险警告
+  if (permission.riskLevel === 'high') {
+    warnings.push('⚠️ 这是一个高风险操作');
+  } else if (permission.riskLevel === 'critical') {
+    warnings.push('🔴 这是一个关键危险操作，请谨慎确认');
+  }
+
+  // 特定工具的额外检查
+  if (toolArgs && permission.operationType === 'delete') {
+    const ids = toolArgs.ids || toolArgs.id;
+    if (Array.isArray(ids) && ids.length > 10) {
+      warnings.push(`即将删除 ${ids.length} 条记录`);
+    }
+  }
+
+  // 批量操作的数量警告
+  if (toolArgs && toolName === 'transaction' && toolArgs.action === 'batch_create') {
+    const items = toolArgs.items as any[];
+    if (items && items.length > 0) {
+      warnings.push(`即将创建 ${items.length} 条交易记录`);
+    }
+  }
+
+  // 检查是否已设置为"始终允许"
+  // 注意：critical 级别的操作即使设置了始终允许，仍然需要确认
+  // 对于领域工具，使用原始工具名 + action 作为始终允许的 key
+  const alwaysAllowedKey = dynamicPermission ? `${toolName}.${toolArgs?.action}` : toolName;
+  const needsConfirmation = requiresConfirmation(permission);
+  const isAlwaysAllowed = isToolAlwaysAllowed(alwaysAllowedKey);
+  const skipConfirmation = isAlwaysAllowed && permission.riskLevel !== 'critical';
+
+  return {
+    allowed,
+    requiresConfirmation: needsConfirmation && !skipConfirmation,
+    blockReason,
+    warnings,
+  };
+}

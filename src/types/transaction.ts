@@ -6,6 +6,9 @@ export interface Category {
   icon: string;
   color: string;
   type: TransactionType;
+  isSystem?: boolean;
+  isFrequent?: boolean;
+  isRecommended?: boolean; // 系统推荐的常用分类
 }
 
 export interface Transaction {

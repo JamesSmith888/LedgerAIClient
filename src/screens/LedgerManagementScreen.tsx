@@ -97,34 +97,6 @@ export const LedgerManagementScreen: React.FC = () => {
       <Card style={[
         isDefault ? styles.ledgerCardActive : styles.ledgerCard,
       ] as any}>
-        {/* 左上角标签 */}
-        <View style={styles.badgeContainer}>
-          {/* 默认账本徽章 */}
-          {isDefault && (
-            <View style={styles.defaultBadge}>
-              <Icon
-                name="star"
-                size={12}
-                color={Colors.accent.yellow}
-                style={styles.badgeIcon}
-              />
-              <Text style={styles.defaultBadgeText}>默认</Text>
-            </View>
-          )}
-          {/* 受邀加入徽章 */}
-          {isJoined && (
-            <View style={styles.joinedBadge}>
-              <Icon
-                name="ticket"
-                size={12}
-                color={Colors.accent.purple}
-                style={styles.badgeIcon}
-              />
-              <Text style={styles.joinedBadgeText}>受邀</Text>
-            </View>
-          )}
-        </View>
-        
         <TouchableOpacity
           style={styles.ledgerCardContent}
           activeOpacity={0.7}
@@ -150,7 +122,21 @@ export const LedgerManagementScreen: React.FC = () => {
               />
             </View>
             <View style={styles.ledgerTextInfo}>
-              <Text style={styles.ledgerName}>{item.name}</Text>
+              <View style={styles.ledgerNameRow}>
+                <Text style={styles.ledgerName}>{item.name}</Text>
+                {/* 默认账本徽章 */}
+                {isDefault && (
+                  <View style={styles.badgeDefault}>
+                    <Text style={styles.badgeDefaultText}>默认</Text>
+                  </View>
+                )}
+                {/* 受邀加入徽章 */}
+                {isJoined && (
+                  <View style={styles.badgeShared}>
+                    <Text style={styles.badgeSharedText}>受邀</Text>
+                  </View>
+                )}
+              </View>
               <Text style={styles.ledgerType}>
                 {item.typeName}
                 {!isPersonal && item.memberCount && ` · ${item.memberCount}名成员`}
@@ -197,7 +183,7 @@ export const LedgerManagementScreen: React.FC = () => {
             style={styles.backButton}
             onPress={() => navigation.goBack()}
           >
-            <Text style={styles.backButtonText}>←</Text>
+            <Icon name="arrow-back" size={24} color={Colors.text} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>我的账本</Text>
           <View style={styles.headerRight} />
@@ -288,7 +274,7 @@ export const LedgerManagementScreen: React.FC = () => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: Colors.backgroundSecondary,
+    backgroundColor: Colors.background,
   },
   container: {
     flex: 1,
@@ -300,17 +286,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.lg,
+    paddingVertical: Spacing.md,
     backgroundColor: Colors.surface,
     ...Shadows.sm,
+    zIndex: 10,
   },
   backButton: {
     padding: Spacing.xs,
     marginLeft: -Spacing.xs,
-  },
-  backButtonText: {
-    fontSize: 28,
-    color: Colors.primary,
   },
   headerTitle: {
     fontSize: FontSizes.xl,
@@ -323,25 +306,23 @@ const styles = StyleSheet.create({
 
   // 列表 - 优化间距
   listContent: {
-    paddingHorizontal: Spacing.md,
-    paddingTop: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.md,
     paddingBottom: 180, // 增加底部间距，防止被底部按钮遮挡
   },
 
   // 账本卡片 - Telegram 风格：微妙的视觉提示
   ledgerCard: {
-    marginBottom: Spacing.sm,
-    paddingVertical: Spacing.md,
-    paddingHorizontal: Spacing.lg,
+    marginBottom: Spacing.md,
+    padding: Spacing.md,
     backgroundColor: Colors.surface,
     borderRadius: BorderRadius.lg,
     ...Shadows.sm,
     position: 'relative',
   },
   ledgerCardActive: {
-    marginBottom: Spacing.sm,
-    paddingVertical: Spacing.md,
-    paddingHorizontal: Spacing.lg,
+    marginBottom: Spacing.md,
+    padding: Spacing.md,
     backgroundColor: Colors.surface,
     borderRadius: BorderRadius.lg,
     ...Shadows.md,
@@ -370,8 +351,8 @@ const styles = StyleSheet.create({
     paddingRight: Spacing.xs,
   },
   ledgerIconContainer: {
-    width: 56,
-    height: 56,
+    width: 48,
+    height: 48,
     borderRadius: BorderRadius.xl,
     alignItems: 'center',
     justifyContent: 'center',
@@ -387,42 +368,50 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center', // 垂直居中对齐
   },
+  ledgerNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.xs / 2,
+    flexWrap: 'wrap',
+  },
   ledgerName: {
     fontSize: FontSizes.lg,
     fontWeight: FontWeights.bold,
     color: Colors.text,
-    marginBottom: Spacing.xs / 2, // 恢复原来的间距
+    marginRight: Spacing.xs,
   },
-  // 默认账本徽章 - 右上角星标
-  defaultBadge: {
-    backgroundColor: Colors.accent.yellow + '20',
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: Spacing.xs / 2,
-    borderRadius: BorderRadius.sm,
-    borderWidth: 1,
-    borderColor: Colors.accent.yellow + '40',
+  // 默认账本徽章
+  badgeDefault: {
+    backgroundColor: Colors.accent.yellow + '15',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginRight: Spacing.xs,
+    borderWidth: 0.5,
+    borderColor: Colors.accent.yellow + '30',
   },
-  defaultBadgeText: {
-    fontSize: FontSizes.xs,
-    fontWeight: FontWeights.semibold,
+  badgeDefaultText: {
+    fontSize: 10,
     color: Colors.accent.yellow,
+    fontWeight: FontWeights.medium,
+  },
+  // 受邀加入徽章
+  badgeShared: {
+    backgroundColor: Colors.accent.purple + '15',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginRight: Spacing.xs,
+    borderWidth: 0.5,
+    borderColor: Colors.accent.purple + '30',
+  },
+  badgeSharedText: {
+    fontSize: 10,
+    color: Colors.accent.purple,
+    fontWeight: FontWeights.medium,
   },
   badgeIcon: {
     marginRight: Spacing.xs / 2,
-  },
-  // 受邀加入徽章
-  joinedBadge: {
-    backgroundColor: Colors.accent.purple + '20',
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: Spacing.xs / 2,
-    borderRadius: BorderRadius.sm,
-    borderWidth: 1,
-    borderColor: Colors.accent.purple + '40',
-  },
-  joinedBadgeText: {
-    fontSize: FontSizes.xs,
-    fontWeight: FontWeights.semibold,
-    color: Colors.accent.purple,
   },
   // Telegram 风格的勾选标记 - 右上角圆点徽章（已废弃，使用默认徽章替代）
   activeCheckmark: {

@@ -13,6 +13,7 @@ interface BaseChartProps {
     title?: string;
     subtitle?: string;
     emptyMessage?: string;
+    headerRight?: React.ReactNode;
     children: React.ReactNode;
 }
 
@@ -23,15 +24,19 @@ export const BaseChart: React.FC<BaseChartProps> = ({
     title,
     subtitle,
     emptyMessage = '暂无数据',
+    headerRight,
     children,
 }) => {
     return (
         <View style={styles.container}>
             {/* 标题区域 */}
-            {(title || subtitle) && (
+            {(title || subtitle || headerRight) && (
                 <View style={styles.header}>
-                    {title && <Text style={styles.title}>{title}</Text>}
-                    {subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}
+                    <View style={styles.headerLeft}>
+                        {title && <Text style={styles.title}>{title}</Text>}
+                        {subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}
+                    </View>
+                    {headerRight && <View style={styles.headerRight}>{headerRight}</View>}
                 </View>
             )}
 
@@ -70,6 +75,15 @@ const styles = StyleSheet.create({
     },
     header: {
         marginBottom: Spacing.md,
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'flex-start',
+    },
+    headerLeft: {
+        flex: 1,
+    },
+    headerRight: {
+        marginLeft: Spacing.md,
     },
     title: {
         fontSize: FontSizes.lg,

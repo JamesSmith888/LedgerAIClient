@@ -3,7 +3,11 @@
  */
 export { BottomTabNavigator } from '../navigation/BottomTabNavigator';
 
-export { GiftedChatScreen } from './GiftedChatScreen';
+// 新的自定义 Agent 聊天页面
+export { AgentScreen } from './AgentScreen';
+
+// 原有的 GiftedChat 实现（已停用，保留作为参考）
+// export { GiftedChatScreen } from './GiftedChatScreen';
 
 export { AddTransactionScreen } from './AddTransactionScreen';
 
@@ -26,6 +30,17 @@ export { JoinByCodeScreen } from './JoinByCodeScreen';
 // 支付方式相关页面
 export { PaymentMethodManagementScreen } from './PaymentMethodManagementScreen';
 
+// 分类相关页面
+export { CategoryManagementScreen } from './CategoryManagementScreen';
+
+// 模板相关页面
+export { TemplateManagementScreen } from './TemplateManagementScreen';
+
 // 反馈相关页面
 export { FeedbackScreen } from './FeedbackScreen';
+export { FeedbackDetailScreen } from './FeedbackDetailScreen';
 export { SubmitFeedbackScreen } from './SubmitFeedbackScreen';
+
+// 设置相关页面
+export { SettingsScreen } from './SettingsScreen';
+export { DataExportScreen } from './DataExportScreen';

@@ -4,6 +4,9 @@
  *
  * @format
  */
+// Polyfills for LangChain compatibility
+import 'react-native-get-random-values';
+import 'react-native-url-polyfill/auto';
 import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -17,10 +20,15 @@ import {
   LedgerDetailScreen,
   CreateLedgerScreen,
   PaymentMethodManagementScreen,
+  CategoryManagementScreen,
+  TemplateManagementScreen,
   AcceptInviteScreen,
   JoinByCodeScreen,
   FeedbackScreen,
+  FeedbackDetailScreen,
   SubmitFeedbackScreen,
+  SettingsScreen,
+  DataExportScreen,
 } from './src/screens';
 import { InviteMemberScreen } from './src/screens/InviteMemberScreen';
 import { EditProfileScreen } from './src/screens/EditProfileScreen';
@@ -33,6 +41,7 @@ import { CategoryProvider } from './src/context/CategoryContext';
 import { opacity } from 'react-native-reanimated/lib/typescript/Colors';
 import { LedgerProvider } from './src/context/LedgerContext';
 import { PaymentMethodProvider } from './src/context/PaymentMethodContext';
+import { TemplateProvider } from './src/context/TemplateContext';
 import Toast from 'react-native-toast-message';
 import { NetworkDebugger } from './src/components/NetworkDebugger';
 
@@ -108,6 +117,18 @@ const MainNavigator = () => {
         component={PaymentMethodManagementScreen}
       />
 
+      {/* 全屏页面 - 分类相关 */}
+      <MainStack.Screen
+        name="CategoryManagement"
+        component={CategoryManagementScreen}
+      />
+
+      {/* 全屏页面 - 模板相关 */}
+      <MainStack.Screen
+        name="TemplateManagement"
+        component={TemplateManagementScreen}
+      />
+
       {/* 全屏页面 - 用户相关 */}
       <MainStack.Screen
         name="EditProfile"
@@ -120,8 +141,22 @@ const MainNavigator = () => {
         component={FeedbackScreen}
       />
       <MainStack.Screen
+        name="FeedbackDetail"
+        component={FeedbackDetailScreen}
+      />
+      <MainStack.Screen
         name="SubmitFeedback"
         component={SubmitFeedbackScreen}
+      />
+
+      {/* 全屏页面 - 设置相关 */}
+      <MainStack.Screen
+        name="Settings"
+        component={SettingsScreen}
+      />
+      <MainStack.Screen
+        name="DataExport"
+        component={DataExportScreen}
       />
 
       {/* 其他全屏页面 */}
@@ -153,12 +188,14 @@ function App() {
         <LedgerProvider>
           <CategoryProvider>
             <PaymentMethodProvider>
-              <NavigationContainer>
-                <StatusBar barStyle="dark-content" backgroundColor="#F2F2F7" />
-                <AppNavigator />
-                {/* 网络调试器 - 点击右下角🐛图标查看 */}
-                {/*<NetworkDebugger />*/}
-              </NavigationContainer>
+              <TemplateProvider>
+                <NavigationContainer>
+                  <StatusBar barStyle="dark-content" backgroundColor="#F2F2F7" />
+                  <AppNavigator />
+                  {/* 网络调试器 - 点击右下角🐛图标查看 */}
+                  {/*<NetworkDebugger />*/}
+                </NavigationContainer>
+              </TemplateProvider>
             </PaymentMethodProvider>
           </CategoryProvider>
         </LedgerProvider>

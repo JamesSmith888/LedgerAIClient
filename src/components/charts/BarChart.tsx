@@ -7,6 +7,7 @@ import { View, Text, StyleSheet, Dimensions } from 'react-native';
 import { BarChart } from 'react-native-chart-kit';
 import { Colors, Spacing, FontSizes, FontWeights } from '../../constants/theme';
 import { CategoryIcon } from '../common/CategoryIcon';
+import { formatCurrency } from '../../utils/helpers';
 import type { StatisticsItem } from '../../types/report';
 
 interface CustomBarChartProps {
@@ -88,7 +89,7 @@ export const CustomBarChart: React.FC<CustomBarChartProps> = ({
                             {item.label}
                         </Text>
                         <Text style={styles.legendValue}>
-                            ¥{item.amount.toFixed(2)}
+                            {formatCurrency(item.amount)}
                         </Text>
                         <Text style={styles.legendPercentage}>
                             {item.percentage.toFixed(1)}%

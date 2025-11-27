@@ -4,6 +4,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+    ActivityIndicator,
     FlatList,
     Modal,
     Pressable,
@@ -30,8 +31,12 @@ import {
 import type { Category, Transaction } from '../types/transaction';
 import { transactionAPI } from '../api/services';
 import { useCategories } from '../context/CategoryContext';
+import { useAuth } from '../context/AuthContext';
+import { useTemplate } from '../context/TemplateContext';
+import { QuickTransactionPanel } from '../components/QuickTransactionPanel';
 // ========== ✨ 新增导入 ==========
 import { LedgerSelector } from '../components/common';
+import { LedgerMembers } from '../components/ledger/LedgerMembers';
 import { useLedger } from '../context/LedgerContext';
 import { Ledger, LedgerType } from '../types/ledger';
 import { TransactionMoveSheet } from '../components/transaction/TransactionMoveSheet';
@@ -39,6 +44,8 @@ import { Icon } from '../components/common';
 import { CategoryIcon } from '../components/common/CategoryIcon';
 import { MonthPickerSheet } from '../components/transaction/MonthPickerSheet';
 import { DailyStatisticsCalendar } from '../components/transaction/DailyStatisticsCalendar';
+import { CollapsibleSearchBar } from '../components/transaction/SearchBar';
+import Swipeable from 'react-native-gesture-handler/Swipeable';
 
 type FilterType = 'ALL' | 'EXPENSE' | 'INCOME';
 
@@ -61,7 +68,7 @@ const SORT_OPTIONS: SortOption[] = [
 ];
 
 // 分组类型定义
-type GroupByType = 'none' | 'category' | 'amount' | 'creator';
+type GroupByType = 'none' | 'day' | 'category' | 'amount' | 'creator';
 
 interface GroupByOption {
     type: GroupByType;
@@ -73,6 +80,7 @@ interface GroupByOption {
 // 分组选项配置
 const GROUP_BY_OPTIONS: GroupByOption[] = [
     { type: 'none', label: '不分组', icon: 'list', description: '平铺显示所有记录' },
+    { type: 'day', label: '按天', icon: 'calendar-outline', description: '按日期分组显示' },
     { type: 'category', label: '按分类', icon: 'pricetag', description: '按消费分类分组显示' },
     { type: 'amount', label: '按金额', icon: 'cash', description: '按金额区间分组显示' },
     { type: 'creator', label: '按创建人', icon: 'person', description: '按记录创建人分组' },
@@ -101,6 +109,8 @@ interface TransactionGroup {
     transactions: Transaction[];
     totalAmount: number;
     count: number;
+    totalExpense: number;  // 分组内支出总和
+    totalIncome: number;   // 分组内收入总和
 }
 
 // 获取账本图标
@@ -122,6 +132,9 @@ export const TransactionListScreen: React.FC = () => {
     const insets = useSafeAreaInsets();
 
     const { categories, refreshCategories } = useCategories();
+    const { user } = useAuth();
+    const currentUserId = user?._id ? Number(user._id) : null;
+    const { quickPanelTemplates } = useTemplate();
 
     // ========== ✨ 新增：账本相关状态 ==========
     const { ledgers, currentLedger, defaultLedgerId, setCurrentLedger } = useLedger();
@@ -156,6 +169,14 @@ export const TransactionListScreen: React.FC = () => {
         }
     }, [defaultLedgerId, ledgers, prevDefaultLedgerId]);
 
+    // 监听 currentLedger 变化，实现与图表页面的实时同步
+    useEffect(() => {
+        // 如果 currentLedger 变化了，且与当前 filterLedger 不同，则同步更新
+        if (currentLedger && filterLedger?.id !== currentLedger.id) {
+            setFilterLedger(currentLedger);
+        }
+    }, [currentLedger]);
+
     // ========== 状态管理 ==========
     const [transactions, setTransactions] = useState<Transaction[]>([]);
     const [filterType, setFilterType] = useState<FilterType>('ALL');
@@ -168,13 +189,21 @@ export const TransactionListScreen: React.FC = () => {
     // 当前选中的月份（默认当前月）
     const [selectedMonth, setSelectedMonth] = useState<Date>(new Date());
 
+    // ========== ✨ 新增：月度汇总统计状态 ==========
+    const [monthlySummary, setMonthlySummary] = useState({
+        totalIncome: 0,
+        totalExpense: 0,
+        balance: 0,
+        totalCount: 0,
+    });
+
     // 排序相关状态
     const [sortField, setSortField] = useState<SortField>('transactionDateTime');
     const [sortDirection, setSortDirection] = useState<SortDirection>('DESC');
     const [sortSheetVisible, setSortSheetVisible] = useState<boolean>(false);
 
-    // 分组相关状态
-    const [groupBy, setGroupBy] = useState<GroupByType>('none');
+    // 分组相关状态 - ✨ 默认按天分组
+    const [groupBy, setGroupBy] = useState<GroupByType>('day');
     const [groupSheetVisible, setGroupSheetVisible] = useState<boolean>(false);
 
     // 分页相关状态
@@ -185,13 +214,59 @@ export const TransactionListScreen: React.FC = () => {
     // ========== ✨ 新增：月份选择器和日历热力图状态 ==========
     const [monthPickerVisible, setMonthPickerVisible] = useState<boolean>(false);
     const [calendarVisible, setCalendarVisible] = useState<boolean>(false); // 默认收起
+    const [monthlyStatistics, setMonthlyStatistics] = useState<Array<{ date: string; income: number; expense: number; count: number }>>([]);
+
+    // ========== ✨ 搜索相关状态 ==========
+    const [searchExpanded, setSearchExpanded] = useState<boolean>(false);
+    const [searchKeyword, setSearchKeyword] = useState<string>('');
+    const [isSearching, setIsSearching] = useState<boolean>(false);
+
+    // ========== 删除相关状态 ==========
+    const [deleteModalVisible, setDeleteModalVisible] = useState<boolean>(false);
+    const [deletingTransaction, setDeletingTransaction] = useState<Transaction | null>(null);
+    // 记录当前打开的 Swipeable引用，用于自动关闭
+    const swipeableRefs = useMemo(() => new Map<number, Swipeable>(), []);
+
+    // 处理删除点击
+    const handleDeletePress = (transaction: Transaction) => {
+        setDeletingTransaction(transaction);
+        setDeleteModalVisible(true);
+        
+        // 关闭侧滑
+        const ref = swipeableRefs.get(transaction.id);
+        if (ref) {
+            ref.close();
+        }
+    };
+
+    // 确认删除
+    const confirmDelete = async () => {
+        if (!deletingTransaction) return;
+        
+        try {
+            await transactionAPI.delete(deletingTransaction.id);
+            toast.success('删除成功');
+            setDeleteModalVisible(false);
+            setDeletingTransaction(null);
+            // 刷新列表
+            loadTransactions();
+        } catch (error) {
+            console.error('删除交易失败:', error);
+            toast.error('删除失败，请稍后重试');
+        }
+    };
 
     // ========== 数据加载 ==========
     useFocusEffect(
         useCallback(() => {
-            // 页面聚焦时加载数据
+            // ✨ 页面聚焦时并行加载所有数据（互不等待）
             loadTransactions();
-        }, [filterType, filterLedger, selectedMonth, sortField, sortDirection]) // 当筛选条件、月份或排序变化时重新加载
+            // 仅在非搜索模式下加载统计数据
+            if (!searchKeyword) {
+                loadMonthlyStatistics();
+                loadMonthlySummary();
+            }
+        }, [filterType, filterLedger, selectedMonth, sortField, sortDirection, searchKeyword]) // 当筛选条件、月份、排序或搜索关键词变化时重新加载
     );
 
     // 根据categoryId查找category对象
@@ -211,6 +286,11 @@ export const TransactionListScreen: React.FC = () => {
             if (!isLoadMore) {
                 setIsLoading(true);
             }
+            
+            // 搜索模式下显示搜索指示器
+            if (searchKeyword && !isLoadMore) {
+                setIsSearching(true);
+            }
 
             const page = isLoadMore ? currentPage + 1 : 0;
 
@@ -223,19 +303,26 @@ export const TransactionListScreen: React.FC = () => {
                 typeCode = 2;
             }
 
-            // 计算当月的开始和结束时间
-            const startTime = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), 1);
-            const endTime = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0, 23, 59, 59, 999);
+            // 计算当月的开始和结束时间（搜索模式下不限制时间范围，搜索全部数据）
+            let startTime: Date | null = null;
+            let endTime: Date | null = null;
+            
+            if (!searchKeyword) {
+                // 非搜索模式：按月份筛选
+                startTime = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), 1);
+                endTime = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0, 23, 59, 59, 999);
+            }
 
             const response = await transactionAPI.query({
                 ledgerId: filterLedger?.id || null,
                 type: typeCode,
-                startTime: startTime.toISOString(),
-                endTime: endTime.toISOString(),
+                startTime: startTime?.toISOString() || null,
+                endTime: endTime?.toISOString() || null,
                 page,
-                size: 20,
+                size: searchKeyword ? 20 : 10, // 搜索模式下每页显示更多结果
                 sortBy: sortField,
                 sortDirection: sortDirection,
+                keyword: searchKeyword || null,
             });
 
             console.log('获取到的交易记录:', response);
@@ -254,6 +341,52 @@ export const TransactionListScreen: React.FC = () => {
             toast.error('加载数据失败，请稍后重试');
         } finally {
             setIsLoading(false);
+            setIsSearching(false);
+        }
+    };
+
+    // 加载月度统计数据（用于热力图）
+    const loadMonthlyStatistics = async () => {
+        try {
+            // 计算当月的开始和结束时间
+            const startTime = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), 1);
+            const endTime = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0, 23, 59, 59, 999);
+
+            const stats = await transactionAPI.getDailyStatistics(
+                filterLedger?.id || null,
+                startTime.toISOString(),
+                endTime.toISOString()
+            );
+
+            setMonthlyStatistics(stats);
+        } catch (error) {
+            console.error('加载月度统计失败:', error);
+        }
+    };
+
+    // ========== ✨ 新增：加载月度汇总统计（用于顶部汇总区域） ==========
+    const loadMonthlySummary = async () => {
+        try {
+            // 计算当月的开始和结束时间
+            const startTime = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), 1);
+            const endTime = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0, 23, 59, 59, 999);
+
+            const summary = await transactionAPI.getMonthlySummary(
+                filterLedger?.id || null,
+                startTime.toISOString(),
+                endTime.toISOString()
+            );
+
+            setMonthlySummary(summary);
+        } catch (error) {
+            console.error('加载月度汇总失败:', error);
+            // 出错时设置默认值
+            setMonthlySummary({
+                totalIncome: 0,
+                totalExpense: 0,
+                balance: 0,
+                totalCount: 0,
+            });
         }
     };
 
@@ -261,40 +394,70 @@ export const TransactionListScreen: React.FC = () => {
     const onRefresh = async () => {
         setIsRefreshing(true);
         setCurrentPage(0);
+        // ✨ 并行加载所有数据（互不等待）
         await Promise.all([
             loadTransactions(false),
             refreshCategories(),  // 刷新分类数据
+            loadMonthlyStatistics(),  // 刷新月度统计（热力图）
+            loadMonthlySummary(),  // 刷新月度汇总（顶部统计）
         ])
         setIsRefreshing(false);
     };
+
+    // 上拉加载更多
+    const handleLoadMore = useCallback(() => {
+        if (!isLoading && hasMore && transactions.length > 0) {
+            loadTransactions(true);
+        }
+    }, [isLoading, hasMore, transactions.length]);
+
+    // 渲染列表底部（加载指示器）
+    const renderFooter = useCallback(() => {
+        if (!hasMore) {
+            return transactions.length > 0 ? (
+                <View style={styles.footerContainer}>
+                    <Icon name="checkmark-circle" size={16} color={Colors.success} />
+                    <Text style={styles.footerText}>没有更多数据了</Text>
+                </View>
+            ) : null;
+        }
+
+        if (isLoading && transactions.length > 0) {
+            return (
+                <View style={styles.footerContainer}>
+                    <ActivityIndicator size="small" color={Colors.primary} />
+                    <Text style={[styles.footerText, styles.footerLoadingText]}>正在加载更多...</Text>
+                </View>
+            );
+        }
+
+        return null;
+    }, [hasMore, isLoading, transactions.length]);
 
     // ========== 数据处理 ==========
     // 显示的交易列表（由于后端已经做了筛选，这里直接使用）
     const filteredTransactions = transactions;
 
-    // 计算统计数据
-    const statistics = transactions.reduce(
-        (acc, item) => {
-            if (item.type === 'EXPENSE') {
-                acc.totalExpense += item.amount;
-            } else {
-                acc.totalIncome += item.amount;
-            }
-            return acc;
-        },
-        { totalExpense: 0, totalIncome: 0 },
-    );
+    // ========== ✨ 修改：使用独立的月度汇总数据，而非基于分页数据计算 ==========
+    // 统计数据直接来自 monthlySummary 状态，由专门的接口获取
+    const statistics = useMemo(() => {
+        return {
+            totalExpense: monthlySummary.totalExpense,
+            totalIncome: monthlySummary.totalIncome,
+        };
+    }, [monthlySummary]);
 
     // ========== 格式化函数 ==========
+    // 使用 useCallback 缓存格式化函数，避免子组件不必要的重新渲染
     // 格式化月份标题（例如：2024年11月）
-    const formatMonthTitle = (date: Date): string => {
+    const formatMonthTitle = useCallback((date: Date): string => {
         const year = date.getFullYear();
         const month = date.getMonth() + 1;
         return `${year}年${month}月`;
-    };
+    }, []);
 
     // 格式化日期
-    const formatDate = (dateString: string): string => {
+    const formatDate = useCallback((dateString: string): string => {
         const date = new Date(dateString);
         const today = new Date();
         const yesterday = new Date(today);
@@ -309,15 +472,15 @@ export const TransactionListScreen: React.FC = () => {
         const month = date.getMonth() + 1;
         const day = date.getDate();
         return `${month}月${day}日`;
-    };
+    }, []);
 
     // 格式化时间
-    const formatTime = (dateString: string): string => {
+    const formatTime = useCallback((dateString: string): string => {
         const date = new Date(dateString);
         const hours = date.getHours().toString().padStart(2, '0');
         const minutes = date.getMinutes().toString().padStart(2, '0');
         return `${hours}:${minutes}`;
-    };
+    }, []);
 
     // ========== 月份切换 ==========
     const goToPreviousMonth = () => {
@@ -356,10 +519,10 @@ export const TransactionListScreen: React.FC = () => {
     const monthPanResponder = useMemo(
         () =>
             PanResponder.create({
-                onStartShouldSetPanResponder: () => true,
+                onStartShouldSetPanResponder: () => false,
                 onMoveShouldSetPanResponder: (_, gestureState) => {
                     // 只有当水平滑动距离大于垂直滑动距离时才响应
-                    return Math.abs(gestureState.dx) > Math.abs(gestureState.dy);
+                    return Math.abs(gestureState.dx) > 10 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy);
                 },
                 onPanResponderRelease: (_, gestureState) => {
                     // 判断滑动方向和距离
@@ -392,6 +555,24 @@ export const TransactionListScreen: React.FC = () => {
         ) || SORT_OPTIONS[0];
     };
 
+    // ========== ✨ 搜索处理 ==========
+    const handleSearch = useCallback((keyword: string) => {
+        setSearchKeyword(keyword);
+        // 搜索时重置分页
+        setCurrentPage(0);
+    }, []);
+
+    const handleToggleSearch = useCallback(() => {
+        setSearchExpanded(prev => {
+            if (prev) {
+                // 收起搜索时，清空关键词并重新加载
+                setSearchKeyword('');
+                setCurrentPage(0);
+            }
+            return !prev;
+        });
+    }, []);
+
     // ========== 分组处理 ==========
     const handleGroupByChange = (option: GroupByOption) => {
         setGroupBy(option.type);
@@ -403,8 +584,8 @@ export const TransactionListScreen: React.FC = () => {
         return GROUP_BY_OPTIONS.find(opt => opt.type === groupBy) || GROUP_BY_OPTIONS[0];
     };
 
-    // 分组数据处理
-    const groupTransactions = (transactions: Transaction[]): TransactionGroup[] => {
+    // 分组数据处理 - 使用 useCallback 优化性能
+    const groupTransactions = useCallback((transactions: Transaction[]): TransactionGroup[] => {
         if (groupBy === 'none') {
             return [];
         }
@@ -417,6 +598,36 @@ export const TransactionListScreen: React.FC = () => {
             let groupIcon: string;
 
             switch (groupBy) {
+                case 'day': {
+                    // ✨ 按天分组 - 按日期降序显示
+                    const date = new Date(transaction.transactionDateTime);
+                    const year = date.getFullYear();
+                    const month = date.getMonth() + 1;
+                    const day = date.getDate();
+                    
+                    // 生成分组key（用于排序）
+                    groupKey = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                    
+                    // 格式化显示标题
+                    const today = new Date();
+                    const tomorrow = new Date(today);
+                    tomorrow.setDate(tomorrow.getDate() + 1);
+                    const yesterday = new Date(today);
+                    yesterday.setDate(yesterday.getDate() - 1);
+                    
+                    if (date.toDateString() === today.toDateString()) {
+                        groupTitle = '今天';
+                    } else if (date.toDateString() === yesterday.toDateString()) {
+                        groupTitle = '昨天';
+                    } else if (date.toDateString() === tomorrow.toDateString()) {
+                        groupTitle = '明天';
+                    } else {
+                        groupTitle = `${month}月${day}日`;
+                    }
+                    
+                    groupIcon = 'calendar-outline';
+                    break;
+                }
                 case 'category': {
                     // 按分类分组
                     const category = getCategoryById(transaction.categoryId);
@@ -456,6 +667,8 @@ export const TransactionListScreen: React.FC = () => {
                     transactions: [],
                     totalAmount: 0,
                     count: 0,
+                    totalExpense: 0,
+                    totalIncome: 0,
                 });
             }
 
@@ -463,44 +676,35 @@ export const TransactionListScreen: React.FC = () => {
             group.transactions.push(transaction);
             group.totalAmount += transaction.amount;
             group.count += 1;
+            
+            // 分别统计支出和收入
+            if (transaction.type === 'EXPENSE') {
+                group.totalExpense += transaction.amount;
+            } else {
+                group.totalIncome += transaction.amount;
+            }
         });
 
-        // 转换为数组并排序（按总金额降序）
-        return Array.from(groupMap.values()).sort((a, b) => b.totalAmount - a.totalAmount);
-    };
+        // 转换为数组并排序
+        // 按天分组时按日期降序，其他分组按总金额降序
+        return Array.from(groupMap.values()).sort((a, b) => {
+            if (groupBy === 'day') {
+                // 按天分组：按key（日期）降序排序，最近的在前
+                return b.key.localeCompare(a.key);
+            }
+            // 其他分组：按总金额降序
+            return b.totalAmount - a.totalAmount;
+        });
+    }, [groupBy, getCategoryById]);
 
-    // 获取分组后的数据
+    // 获取分组后的数据 - 使用 useMemo 优化
     const groupedTransactions = useMemo(() => {
         return groupTransactions(transactions);
-    }, [transactions, groupBy, categories]);
+    }, [transactions, groupTransactions]);
 
-    // ========== ✨ 新增：计算每日统计数据（用于热力图） ==========
-    const dailyStatistics = useMemo(() => {
-        const statsMap = new Map<string, { income: number; expense: number; count: number }>();
-
-        transactions.forEach(transaction => {
-            // 格式化日期为 YYYY-MM-DD
-            const date = new Date(transaction.transactionDateTime);
-            const dateKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-
-            if (!statsMap.has(dateKey)) {
-                statsMap.set(dateKey, { income: 0, expense: 0, count: 0 });
-            }
-
-            const stat = statsMap.get(dateKey)!;
-            if (transaction.type === 'INCOME') {
-                stat.income += transaction.amount;
-            } else {
-                stat.expense += transaction.amount;
-            }
-            stat.count += 1;
-        });
-
-        return Array.from(statsMap.entries()).map(([date, stat]) => ({
-            date,
-            ...stat,
-        }));
-    }, [transactions]);
+    // ========== ✨ 热力图数据（使用完整的月度统计，而非分页数据） ==========
+    // 直接使用从后端获取的完整月度统计数据，不受分页影响
+    const dailyStatistics = monthlyStatistics;
 
     // ========== 长按处理 ==========
     const handleLongPress = (item: Transaction) => {
@@ -558,19 +762,71 @@ export const TransactionListScreen: React.FC = () => {
     }, [ledgers, filterLedger, currentLedger]);
 
     // ========== 渲染列表项 ==========
-    // 渲染分组标题
     const renderGroupHeader = (group: TransactionGroup) => (
         <View style={styles.groupHeader}>
             <View style={styles.groupHeaderLeft}>
-                <Icon name={group.icon as any} size={20} color={Colors.text} />
+                {groupBy === 'category' ? (
+                    <CategoryIcon icon={group.icon} size={16} color={Colors.textSecondary} />
+                ) : (
+                    <Icon name={group.icon as any} size={16} color={Colors.textSecondary} />
+                )}
                 <Text style={styles.groupHeaderTitle}>{group.title}</Text>
                 <Text style={styles.groupHeaderCount}>({group.count}笔)</Text>
             </View>
-            <Text style={styles.groupHeaderAmount}>
-                ¥{group.totalAmount.toFixed(2)}
-            </Text>
+            <View style={styles.groupHeaderRight}>
+                {/* 支出 */}
+                {group.totalExpense > 0 && (
+                    <View style={styles.groupStatItem}>
+                        <Text style={styles.groupStatLabel}>支</Text>
+                        <Text style={styles.groupStatValue}>
+                            {group.totalExpense.toFixed(2)}
+                        </Text>
+                    </View>
+                )}
+                
+                {/* 收入 */}
+                {group.totalIncome > 0 && (
+                    <View style={styles.groupStatItem}>
+                        <Text style={styles.groupStatLabel}>收</Text>
+                        <Text style={styles.groupStatValue}>
+                            {group.totalIncome.toFixed(2)}
+                        </Text>
+                    </View>
+                )}
+
+                {group.totalExpense === 0 && group.totalIncome === 0 && (
+                    <Text style={styles.groupHeaderEmpty}>-</Text>
+                )}
+            </View>
         </View>
     );
+
+    // 渲染侧滑删除按钮
+    const renderRightActions = (progress: Animated.AnimatedInterpolation<number>, dragX: Animated.AnimatedInterpolation<number>, item: Transaction) => {
+        const trans = dragX.interpolate({
+            inputRange: [-80, 0],
+            outputRange: [0, 80],
+            extrapolate: 'clamp',
+        });
+        
+        return (
+            <View style={styles.rightActionContainer}>
+                <Animated.View
+                    style={[
+                        styles.rightAction,
+                        {
+                            transform: [{ translateX: trans }],
+                        },
+                    ]}
+                >
+                    <View style={styles.deleteButton}>
+                        <Icon name="trash-outline" size={24} color="#fff" />
+                        <Text style={styles.deleteButtonText}>删除</Text>
+                    </View>
+                </Animated.View>
+            </View>
+        );
+    };
 
     const renderTransactionItem = ({ item }: { item: Transaction }) => {
         // 根据 categoryId 获取完整的 category 对象
@@ -592,98 +848,111 @@ export const TransactionListScreen: React.FC = () => {
         const creatorName = item.createdByUserNickname || item.createdByUserName || `用户${item.createdByUserId || '未知'}`;
 
         return (
-            <Pressable
-                onPress={() => handleItemPress(item)}
-                onLongPress={() => handleLongPress(item)}
-                delayLongPress={250}
-                style={({ pressed }) => [
-                    styles.transactionCardWrapper,
-                    pressed && styles.transactionCardPressed
-                ]}
+            <Swipeable
+                ref={(ref) => {
+                    if (ref) {
+                        swipeableRefs.set(item.id, ref);
+                    } else {
+                        swipeableRefs.delete(item.id);
+                    }
+                }}
+                renderRightActions={(progress, dragX) => renderRightActions(progress, dragX, item)}
+                overshootRight={false}
+                onSwipeableWillOpen={() => handleDeletePress(item)}
             >
-                <Card variant="flat" style={styles.transactionCard}>
-                    <View style={styles.transactionRow}>
-                        {/* 左侧：图标和信息 */}
-                        <View style={styles.leftSection}>
-                            <View
-                                style={[
-                                    styles.iconContainer,
-                                    { backgroundColor: category.color + '20' },
-                                ]}
-                            >
-                                <CategoryIcon icon={category.icon} size={24} color={category.color} />
-                            </View>
-                            <View style={styles.infoContainer}>
-                                {/* 第一行：主标题（固定高度） */}
-                                <View style={styles.titleRow}>
-                                    <Text style={styles.categoryName} numberOfLines={1}>
-                                        {item.description || category.name}
-                                    </Text>
+                <Pressable
+                    onPress={() => handleItemPress(item)}
+                    onLongPress={() => handleLongPress(item)}
+                    delayLongPress={250}
+                    style={({ pressed }) => [
+                        styles.transactionCardWrapper,
+                        pressed && styles.transactionCardPressed
+                    ]}
+                >
+                    <Card variant="flat" style={styles.transactionCard}>
+                        <View style={styles.transactionRow}>
+                            {/* 左侧：图标和信息 */}
+                            <View style={styles.leftSection}>
+                                <View
+                                    style={[
+                                        styles.iconContainer,
+                                        { backgroundColor: category.color + '20' },
+                                    ]}
+                                >
+                                    <CategoryIcon icon={category.icon} size={24} color={category.color} />
                                 </View>
-                                
-                                {/* 第二行：元信息（固定高度，绝对定位的元素） */}
-                                <View style={styles.metaRowContainer}>
-                                    {/* 左侧：分类和时间（总是显示） */}
-                                    <View style={styles.metaRowLeft}>
-                                        {item.description && (
-                                            <>
-                                                <Text style={styles.metaText}>{category.name}</Text>
-                                                <Text style={styles.metaDivider}> · </Text>
-                                            </>
-                                        )}
-                                        <Text style={styles.metaText}>{formatDate(item.transactionDateTime)}</Text>
-                                        {shouldShowCreator && (
-                                            <>
-                                                <Text style={styles.metaDivider}> · </Text>
-                                                <Text style={styles.creatorText}>{creatorName}</Text>
-                                            </>
-                                        )}
+                                <View style={styles.infoContainer}>
+                                    {/* 第一行：主标题（固定高度） */}
+                                    <View style={styles.titleRow}>
+                                        <Text style={styles.categoryName} numberOfLines={1}>
+                                            {item.description || category.name}
+                                        </Text>
                                     </View>
                                     
-                                    {/* 右侧：账本标签（绝对定位，不影响左侧内容） */}
-                                    {shouldShowLedger && (
-                                        <View style={styles.metaRowRight}>
-                                            {ledger ? (
-                                                <View style={styles.ledgerBadge}>
-                                                    <Icon 
-                                                        name={getLedgerIcon(ledger.type) as any} 
-                                                        size={9} 
-                                                        color={Colors.primary}
-                                                        style={styles.ledgerBadgeIcon}
-                                                    />
-                                                    <Text style={styles.ledgerBadgeText} numberOfLines={1}>
-                                                        {ledger.name}
-                                                    </Text>
-                                                </View>
-                                            ) : (
-                                                <View style={styles.unassignedBadge}>
-                                                    <Text style={styles.unassignedBadgeText}>
-                                                        默认账本
-                                                    </Text>
-                                                </View>
+                                    {/* 第二行：元信息（固定高度，绝对定位的元素） */}
+                                    <View style={styles.metaRowContainer}>
+                                        {/* 左侧：分类和时间（总是显示） */}
+                                        <View style={styles.metaRowLeft}>
+                                            {item.description && (
+                                                <>
+                                                    <Text style={styles.metaText}>{category.name}</Text>
+                                                    <Text style={styles.metaDivider}> · </Text>
+                                                </>
+                                            )}
+                                            <Text style={styles.metaText}>{formatDate(item.transactionDateTime)}</Text>
+                                            {shouldShowCreator && (
+                                                <>
+                                                    <Text style={styles.metaDivider}> · </Text>
+                                                    <Text style={styles.creatorText}>{creatorName}</Text>
+                                                </>
                                             )}
                                         </View>
-                                    )}
+                                        
+                                        {/* 右侧：账本标签（绝对定位，不影响左侧内容） */}
+                                        {shouldShowLedger && (
+                                            <View style={styles.metaRowRight}>
+                                                {ledger ? (
+                                                    <View style={styles.ledgerBadge}>
+                                                        <Icon 
+                                                            name={getLedgerIcon(ledger.type) as any} 
+                                                            size={9} 
+                                                            color={Colors.primary}
+                                                            style={styles.ledgerBadgeIcon}
+                                                        />
+                                                        <Text style={styles.ledgerBadgeText} numberOfLines={1}>
+                                                            {ledger.name}
+                                                        </Text>
+                                                    </View>
+                                                ) : (
+                                                    <View style={styles.unassignedBadge}>
+                                                        <Text style={styles.unassignedBadgeText}>
+                                                            默认账本
+                                                        </Text>
+                                                    </View>
+                                                )}
+                                            </View>
+                                        )}
+                                    </View>
                                 </View>
                             </View>
-                        </View>
 
-                        {/* 右侧：金额 */}
-                        <View style={styles.rightSection}>
-                            <Text
-                                style={[
-                                    styles.amount,
-                                    item.type === 'EXPENSE'
-                                        ? styles.amountExpense
-                                        : styles.amountIncome,
-                                ]}
-                            >
-                                {item.type === 'EXPENSE' ? '-' : '+'}¥{item.amount.toFixed(2)}
-                            </Text>
+                            {/* 右侧：金额 */}
+                            <View style={styles.rightSection}>
+                                <Text
+                                    style={[
+                                        styles.amount,
+                                        item.type === 'EXPENSE'
+                                            ? styles.amountExpense
+                                            : styles.amountIncome,
+                                    ]}
+                                >
+                                    {item.type === 'EXPENSE' ? '-' : '+'}¥{item.amount.toFixed(2)}
+                                </Text>
+                            </View>
                         </View>
-                    </View>
-                </Card>
-            </Pressable>
+                    </Card>
+                </Pressable>
+            </Swipeable>
         );
     };
 
@@ -701,17 +970,19 @@ export const TransactionListScreen: React.FC = () => {
         console.log('当前导航器:', navigation);
         console.log('父级导航器:', navigation.getParent());
         console.log('尝试跳转到 AddTransaction...');
+        console.log('当前选中的账本:', filterLedger);
 
         const parent = navigation.getParent();
         if (parent) {
             console.log('✅ 找到父级导航器，开始跳转');
-            parent.navigate('AddTransaction');
+            // 传递当前选中的账本给新增交易页
+            parent.navigate('AddTransaction', { selectedLedger: filterLedger });
         } else {
             console.error('❌ 未找到父级导航器');
-            // 备用方案：使用 CommonActions
+            // 备用方案：直接使用 navigation
             console.log('🔄 使用备用导航方案...');
             try {
-                navigation.navigate('AddTransaction' as never);
+                (navigation as any).navigate('AddTransaction', { selectedLedger: filterLedger });
             } catch (error) {
                 console.error('备用方案也失败:', error);
             }
@@ -731,38 +1002,43 @@ export const TransactionListScreen: React.FC = () => {
     const renderHeader = () => (
         <>
             {/* 统计卡片 - 根据筛选条件自适应显示 */}
-            <Card style={styles.statsCard}>
-                {/* 月份选择器 - ✨ 可点击打开月份选择抽屉 */}
-                <View style={styles.monthSelector} {...monthPanResponder.panHandlers}>
-                    <TouchableOpacity
-                        style={styles.monthArrow}
-                        onPress={goToPreviousMonth}
-                        activeOpacity={0.7}
-                    >
-                        <Text style={styles.monthArrowText}>◀</Text>
-                    </TouchableOpacity>
-                    
+            <Card style={styles.statsCard} {...monthPanResponder.panHandlers}>
+                {/* 左右切换箭头 - 绝对定位垂直居中 */}
+                <TouchableOpacity
+                    style={styles.navArrowLeft}
+                    onPress={goToPreviousMonth}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                    <Icon name="chevron-back" size={24} color={Colors.textLight} />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                    style={styles.navArrowRight}
+                    onPress={goToNextMonth}
+                    disabled={isCurrentMonth()}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                    <Icon 
+                        name="chevron-forward" 
+                        size={24} 
+                        color={isCurrentMonth() ? Colors.border : Colors.textLight} 
+                    />
+                </TouchableOpacity>
+
+                {/* 月份标题 */}
+                <View style={styles.monthHeader}>
                     <TouchableOpacity
                         style={styles.monthTitleContainer}
                         onPress={() => setMonthPickerVisible(true)}
                         activeOpacity={0.7}
                     >
                         <Text style={styles.monthTitle}>{formatMonthTitle(selectedMonth)}</Text>
-                        <Icon name="chevron-down" size={18} color={Colors.primary} />
+                        <Icon name="chevron-down" size={16} color={Colors.textSecondary} />
                         {isCurrentMonth() && (
                             <View style={styles.currentMonthBadge}>
                                 <Text style={styles.currentMonthBadgeText}>本月</Text>
                             </View>
                         )}
-                    </TouchableOpacity>
-                    
-                    <TouchableOpacity
-                        style={[styles.monthArrow, isCurrentMonth() && styles.monthArrowDisabled]}
-                        onPress={goToNextMonth}
-                        activeOpacity={0.7}
-                        disabled={isCurrentMonth()}
-                    >
-                        <Text style={[styles.monthArrowText, isCurrentMonth() && styles.monthArrowTextDisabled]}>▶</Text>
                     </TouchableOpacity>
                 </View>
 
@@ -809,7 +1085,42 @@ export const TransactionListScreen: React.FC = () => {
                         </Text>
                     </View>
                 )}
+
+                {/* 日历显示/隐藏切换按钮 */}
+                <TouchableOpacity
+                    style={styles.calendarToggle}
+                    onPress={handleToggleCalendar}
+                    activeOpacity={0.7}
+                >
+                    <Icon
+                        name={calendarVisible ? 'chevron-up' : 'chevron-down'}
+                        size={16}
+                        color={Colors.primary}
+                    />
+                    <Text style={styles.calendarToggleText}>
+                        {calendarVisible ? '收起热力图' : '展开热力图'}
+                    </Text>
+                </TouchableOpacity>
+
+                {/* ========== ✨ 新增：日历热力图 ========== */}
+                <DailyStatisticsCalendar
+                    selectedMonth={selectedMonth}
+                    statistics={dailyStatistics}
+                    visible={calendarVisible}
+                    onDayPress={(date) => {
+                        // 点击某一天，可以滚动到对应日期的交易
+                        console.log('点击日期:', date);
+                    }}
+                />
             </Card>
+
+            {/* ========== ✨ 快捷记账面板 ========== */}
+            {quickPanelTemplates.length > 0 && (
+                <QuickTransactionPanel
+                    templates={quickPanelTemplates}
+                    onTransactionCreated={loadTransactions}
+                />
+            )}
 
             {/* 筛选器 */}
             <View style={styles.filterContainer}>
@@ -879,33 +1190,6 @@ export const TransactionListScreen: React.FC = () => {
                 </TouchableOpacity>
             </View>
 
-            {/* ========== ✨ 新增：日历热力图 ========== */}
-            <DailyStatisticsCalendar
-                selectedMonth={selectedMonth}
-                statistics={dailyStatistics}
-                visible={calendarVisible}
-                onDayPress={(date) => {
-                    // 点击某一天，可以滚动到对应日期的交易
-                    console.log('点击日期:', date);
-                }}
-            />
-
-            {/* 日历显示/隐藏切换按钮 */}
-            <TouchableOpacity
-                style={styles.calendarToggle}
-                onPress={handleToggleCalendar}
-                activeOpacity={0.7}
-            >
-                <Icon
-                    name={calendarVisible ? 'chevron-up' : 'chevron-down'}
-                    size={16}
-                    color={Colors.primary}
-                />
-                <Text style={styles.calendarToggleText}>
-                    {calendarVisible ? '收起热力图' : '展开热力图'}
-                </Text>
-            </TouchableOpacity>
-
             {/* 列表标题和操作按钮 */}
             <View style={styles.listHeader}>
                 <Text style={styles.listTitle}>
@@ -926,9 +1210,24 @@ export const TransactionListScreen: React.FC = () => {
                     >
                         <Icon name={getCurrentGroupByOption().icon as any} size={16} color={Colors.primary} />
                         {groupBy !== 'none' && (
-                            <Text style={styles.actionButtonText}>{getCurrentGroupByOption().label}</Text>
+                            <>
+                                <Text style={styles.actionButtonText}>{getCurrentGroupByOption().label}</Text>
+                                {/* ✨ 清除按钮 - 快速取消分组 */}
+                                <TouchableOpacity
+                                    style={styles.actionButtonClear}
+                                    onPress={(e) => {
+                                        e.stopPropagation();
+                                        setGroupBy('none');
+                                    }}
+                                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                >
+                                    <Icon name="close-circle" size={14} color={Colors.textLight} />
+                                </TouchableOpacity>
+                            </>
                         )}
-                        <Text style={styles.actionButtonArrow}>▼</Text>
+                        {groupBy === 'none' && (
+                            <Text style={styles.actionButtonArrow}>▼</Text>
+                        )}
                     </TouchableOpacity>
                     
                     {/* 排序按钮 */}
@@ -941,7 +1240,26 @@ export const TransactionListScreen: React.FC = () => {
                         activeOpacity={0.7}
                     >
                         <Icon name={getCurrentSortOption().icon as any} size={16} color={Colors.primary} />
-                        <Text style={styles.actionButtonArrow}>▼</Text>
+                        {(sortField !== 'transactionDateTime' || sortDirection !== 'DESC') && (
+                            <>
+                                <Text style={styles.actionButtonText}>{getCurrentSortOption().label}</Text>
+                                {/* ✨ 清除按钮 - 快速恢复默认排序 */}
+                                <TouchableOpacity
+                                    style={styles.actionButtonClear}
+                                    onPress={(e) => {
+                                        e.stopPropagation();
+                                        setSortField('transactionDateTime');
+                                        setSortDirection('DESC');
+                                    }}
+                                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                >
+                                    <Icon name="close-circle" size={14} color={Colors.textLight} />
+                                </TouchableOpacity>
+                            </>
+                        )}
+                        {(sortField === 'transactionDateTime' && sortDirection === 'DESC') && (
+                            <Text style={styles.actionButtonArrow}>▼</Text>
+                        )}
                     </TouchableOpacity>
                 </View>
             </View>
@@ -955,20 +1273,85 @@ export const TransactionListScreen: React.FC = () => {
                 <View style={styles.container}>
                     {/* 头部 - 账本选择器 */}
                     <View style={styles.header}>
-                        {ledgers.length > 1 ? (
-                            <LedgerSelector
-                                ledgers={ledgers}
-                                currentLedger={filterLedger}
-                                onSelect={(ledger) => setFilterLedger(ledger)}
-                                mode="dropdown"
-                                showAllOption={true}
-                            />
-                        ) : (
-                            <Text style={styles.headerTitle}>
-                                {ledgers.length === 1 ? ledgers[0].name : '我的账本'}
-                            </Text>
-                        )}
+            <View style={styles.headerLeft}>
+                {ledgers.length > 1 ? (
+                    <LedgerSelector
+                        ledgers={ledgers}
+                        currentLedger={filterLedger}
+                        onSelect={(ledger) => {
+                            setFilterLedger(ledger);
+                            // 同步更新 LedgerContext 的 currentLedger，实现与图表页的同步
+                            if (ledger) {
+                                setCurrentLedger(ledger);
+                            }
+                        }}
+                        mode="dropdown"
+                        showAllOption={true}
+                        defaultLedgerId={defaultLedgerId}
+                        currentUserId={currentUserId}
+                    />
+                ) : (
+                    <Text style={styles.headerTitle}>
+                        {ledgers.length === 1 ? ledgers[0].name : '我的账本'}
+                    </Text>
+                )}
+            </View>
+                        <View style={styles.headerRight}>
+                            {/* ✨ 新增：共享账本成员展示 */}
+                            {filterLedger && filterLedger.type === LedgerType.SHARED && (
+                                <LedgerMembers 
+                                    ledgerId={filterLedger.id} 
+                                    maxDisplay={3}
+                                    avatarSize={28}
+                                />
+                            )}
+                            {/* ✨ 新增：搜索按钮 */}
+                            <TouchableOpacity
+                                style={[
+                                    styles.searchButton,
+                                    (searchExpanded || searchKeyword) && styles.searchButtonActive
+                                ]}
+                                onPress={handleToggleSearch}
+                                activeOpacity={0.7}
+                            >
+                                <Icon 
+                                    name={searchExpanded ? "close" : "search"} 
+                                    size={20} 
+                                    color={(searchExpanded || searchKeyword) ? Colors.primary : Colors.textSecondary} 
+                                />
+                            </TouchableOpacity>
+                        </View>
                     </View>
+
+                    {/* ✨ 新增：可折叠搜索栏 */}
+                    <CollapsibleSearchBar
+                        expanded={searchExpanded}
+                        onToggle={handleToggleSearch}
+                        onSearch={handleSearch}
+                        placeholder="搜索交易备注、分类..."
+                        isSearching={isSearching}
+                        initialKeyword={searchKeyword}
+                    />
+
+                    {/* 搜索模式提示 */}
+                    {searchKeyword && (
+                        <View style={styles.searchModeHint}>
+                            <Icon name="search" size={14} color={Colors.primary} />
+                            <Text style={styles.searchModeHintText}>
+                                搜索 "{searchKeyword}" · 找到 {totalElements} 条记录
+                            </Text>
+                            <TouchableOpacity
+                                style={styles.searchModeClearButton}
+                                onPress={() => {
+                                    setSearchKeyword('');
+                                    setSearchExpanded(false);
+                                }}
+                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            >
+                                <Text style={styles.searchModeClearText}>清除</Text>
+                            </TouchableOpacity>
+                        </View>
+                    )}
 
                     {/* 列表 */}
                     {groupBy === 'none' ? (
@@ -979,6 +1362,7 @@ export const TransactionListScreen: React.FC = () => {
                             keyExtractor={item => String(item.id)}
                             ListHeaderComponent={renderHeader}
                             ListEmptyComponent={renderEmpty}
+                            ListFooterComponent={renderFooter}
                             contentContainerStyle={styles.listContent}
                             showsVerticalScrollIndicator={false}
                             refreshControl={
@@ -988,6 +1372,20 @@ export const TransactionListScreen: React.FC = () => {
                                     tintColor={Colors.primary}
                                 />
                             }
+                            // 上拉加载更多
+                            onEndReached={handleLoadMore}
+                            onEndReachedThreshold={0.5}
+                            // 性能优化属性
+                            removeClippedSubviews={true}
+                            maxToRenderPerBatch={10}
+                            updateCellsBatchingPeriod={50}
+                            initialNumToRender={15}
+                            windowSize={10}
+                            getItemLayout={(data, index) => ({
+                                length: 80,
+                                offset: 80 * index,
+                                index,
+                            })}
                         />
                     ) : (
                         // 分组显示
@@ -1006,6 +1404,7 @@ export const TransactionListScreen: React.FC = () => {
                             keyExtractor={item => item.key}
                             ListHeaderComponent={renderHeader}
                             ListEmptyComponent={renderEmpty}
+                            ListFooterComponent={renderFooter}
                             contentContainerStyle={styles.listContent}
                             showsVerticalScrollIndicator={false}
                             refreshControl={
@@ -1015,6 +1414,15 @@ export const TransactionListScreen: React.FC = () => {
                                     tintColor={Colors.primary}
                                 />
                             }
+                            // 上拉加载更多
+                            onEndReached={handleLoadMore}
+                            onEndReachedThreshold={0.5}
+                            // 性能优化属性
+                            removeClippedSubviews={true}
+                            maxToRenderPerBatch={5}
+                            updateCellsBatchingPeriod={100}
+                            initialNumToRender={8}
+                            windowSize={8}
                         />
                     )}
 
@@ -1184,6 +1592,58 @@ export const TransactionListScreen: React.FC = () => {
                     </Pressable>
                 </Pressable>
             </Modal>
+
+            {/* 删除确认弹窗 */}
+            <Modal
+                visible={deleteModalVisible}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setDeleteModalVisible(false)}
+            >
+                <Pressable
+                    style={styles.deleteModalOverlay}
+                    onPress={() => setDeleteModalVisible(false)}
+                >
+                    <View style={styles.deleteModalContainer}>
+                        <View style={styles.deleteModalIconContainer}>
+                                <Icon name="trash" size={32} color={Colors.expense} />
+                            </View>
+                            <Text style={styles.deleteModalTitle}>确认删除</Text>
+                            <Text style={styles.deleteModalMessage}>
+                                确定要删除这条记录吗？此操作无法撤销。
+                            </Text>
+                            
+                            {deletingTransaction && (
+                                <View style={styles.deletePreviewCard}>
+                                    <Text style={styles.deletePreviewText} numberOfLines={1}>
+                                        {deletingTransaction.description || '无备注'}
+                                    </Text>
+                                    <Text style={[
+                                        styles.deletePreviewAmount,
+                                        deletingTransaction.type === 'EXPENSE' ? styles.amountExpense : styles.amountIncome
+                                    ]}>
+                                        {deletingTransaction.type === 'EXPENSE' ? '-' : '+'}¥{deletingTransaction.amount.toFixed(2)}
+                                    </Text>
+                                </View>
+                            )}
+
+                            <View style={styles.deleteModalActions}>
+                                <TouchableOpacity
+                                    style={styles.deleteModalCancelButton}
+                                    onPress={() => setDeleteModalVisible(false)}
+                                >
+                                    <Text style={styles.deleteModalCancelText}>取消</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={styles.deleteModalConfirmButton}
+                                    onPress={confirmDelete}
+                                >
+                                    <Text style={styles.deleteModalConfirmText}>删除</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                </Pressable>
+            </Modal>
         </>
     );
 };
@@ -1205,6 +1665,17 @@ const styles = StyleSheet.create({
         backgroundColor: Colors.surface,
         borderBottomWidth: 1,
         borderBottomColor: Colors.divider,
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+    },
+    headerLeft: {
+        flexShrink: 1,
+    },
+    headerRight: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.sm,
     },
     headerTitle: {
         fontSize: FontSizes.xxl,
@@ -1212,10 +1683,49 @@ const styles = StyleSheet.create({
         color: Colors.text,
     },
 
+    // ✨ 搜索按钮
+    searchButton: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        backgroundColor: Colors.background,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    searchButtonActive: {
+        backgroundColor: Colors.primary + '15',
+    },
+
+    // ✨ 搜索模式提示
+    searchModeHint: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: Colors.primary + '10',
+        paddingVertical: Spacing.xs,
+        paddingHorizontal: Spacing.md,
+        gap: Spacing.xs,
+    },
+    searchModeHintText: {
+        fontSize: FontSizes.sm,
+        color: Colors.primary,
+        fontWeight: FontWeights.medium,
+        flex: 1,
+    },
+    searchModeClearButton: {
+        paddingHorizontal: Spacing.sm,
+        paddingVertical: Spacing.xs,
+    },
+    searchModeClearText: {
+        fontSize: FontSizes.sm,
+        color: Colors.primary,
+        fontWeight: FontWeights.semibold,
+    },
+
     // 列表
     listContent: {
         padding: Spacing.md,
-        paddingBottom: 120, // 为悬浮按钮留出空间（增加到 120）
+        paddingBottom: 140, // 为悬浮按钮留出足够空间，确保最后的交易项不被遮挡
     },
 
     // 统计卡片
@@ -1223,35 +1733,32 @@ const styles = StyleSheet.create({
         marginBottom: Spacing.md,
         paddingVertical: Spacing.lg,
         paddingHorizontal: Spacing.lg,
+        position: 'relative',
     },
-    // 月份选择器
-    monthSelector: {
-        flexDirection: 'row',
+    // 导航箭头
+    navArrowLeft: {
+        position: 'absolute',
+        left: 4,
+        top: '50%',
+        marginTop: -20, // 居中微调
+        zIndex: 10,
+        padding: Spacing.sm,
+    },
+    navArrowRight: {
+        position: 'absolute',
+        right: 4,
+        top: '50%',
+        marginTop: -20,
+        zIndex: 10,
+        padding: Spacing.sm,
+    },
+    monthHeader: {
         alignItems: 'center',
-        justifyContent: 'space-between',
+        justifyContent: 'center',
         marginBottom: Spacing.md,
         paddingBottom: Spacing.md,
         borderBottomWidth: 1,
         borderBottomColor: Colors.border + '20',
-    },
-    monthArrow: {
-        width: 36,
-        height: 36,
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderRadius: 18,
-        backgroundColor: Colors.background,
-    },
-    monthArrowDisabled: {
-        opacity: 0.3,
-    },
-    monthArrowText: {
-        fontSize: 14,
-        color: Colors.primary,
-        fontWeight: FontWeights.bold,
-    },
-    monthArrowTextDisabled: {
-        color: Colors.textLight,
     },
     monthTitleContainer: {
         flexDirection: 'row',
@@ -1429,48 +1936,81 @@ const styles = StyleSheet.create({
         color: Colors.textLight,
         marginLeft: 2,
     },
+    // ✨ 新增：操作按钮清除图标样式
+    actionButtonClear: {
+        padding: 4,
+        marginLeft: 2,
+    },
 
     // 分组标题
     groupHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        paddingVertical: Spacing.sm,
+        paddingVertical: Spacing.xs,
         paddingHorizontal: Spacing.md,
         marginTop: Spacing.md,
-        marginBottom: Spacing.xs,
+        marginBottom: 4,
         backgroundColor: Colors.background,
         borderRadius: BorderRadius.md,
     },
     groupHeaderLeft: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: Spacing.xs,
+        gap: 6,
+        flex: 1,
     },
     groupHeaderIcon: {
         fontSize: 20,
     },
     groupHeaderTitle: {
-        fontSize: FontSizes.md,
-        fontWeight: FontWeights.semibold,
-        color: Colors.text,
+        fontSize: FontSizes.sm,
+        fontWeight: FontWeights.medium,
+        color: Colors.textSecondary,
     },
     groupHeaderCount: {
-        fontSize: FontSizes.sm,
-        color: Colors.textSecondary,
+        fontSize: FontSizes.xs,
+        color: Colors.textLight,
     },
     groupHeaderAmount: {
         fontSize: FontSizes.lg,
         fontWeight: FontWeights.bold,
         color: Colors.primary,
     },
+    // 分组标题右侧（支出+收入）
+    groupHeaderRight: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.md,
+    },
+    groupStatItem: {
+        flexDirection: 'row',
+        alignItems: 'baseline',
+        gap: 2,
+    },
+    groupStatLabel: {
+        fontSize: 10,
+        color: Colors.textLight,
+    },
+    groupStatValue: {
+        fontSize: 12,
+        color: Colors.textSecondary,
+        fontWeight: FontWeights.medium,
+    },
+    groupHeaderEmpty: {
+        fontSize: 12,
+        color: Colors.textLight,
+    },
 
     // 交易卡片 - 优化高度，参考 Google/Telegram 风格
     transactionCardWrapper: {
         marginBottom: Spacing.xs,
+        borderRadius: BorderRadius.lg,
     },
     transactionCardPressed: {
-        opacity: 0.7,
+        // 点击时使用缩放效果，避免背景色叠加问题
+        transform: [{ scale: 0.98 }],
+        opacity: 0.9,
     },
     transactionCard: {
         paddingVertical: Spacing.sm,
@@ -1649,12 +2189,29 @@ const styles = StyleSheet.create({
         backgroundColor: Colors.primary,
         alignItems: 'center',
         justifyContent: 'center',
+        opacity: 0.88, // 添加适度透明度，避免完全遮挡
         ...Shadows.xl,
     },
     fabIcon: {
         fontSize: 32,
         color: Colors.surface,
         fontWeight: FontWeights.bold,
+    },
+    // 列表底部加载指示器
+    footerContainer: {
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingVertical: Spacing.lg,
+        gap: Spacing.sm,
+    },
+    footerText: {
+        fontSize: FontSizes.sm,
+        color: Colors.textSecondary,
+    },
+    footerLoadingText: {
+        color: Colors.primary,
+        fontWeight: FontWeights.medium,
     },
     // ========== ✨ 新增：账本筛选器样式 ==========
     ledgerFilterContainer: {
@@ -1767,13 +2324,132 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        paddingVertical: Spacing.xs,
-        marginBottom: Spacing.md,
+        paddingVertical: Spacing.sm,
+        marginTop: Spacing.md,
         gap: Spacing.xs,
+        borderTopWidth: 1,
+        borderTopColor: Colors.border + '30',
     },
     calendarToggleText: {
         fontSize: FontSizes.sm,
         color: Colors.primary,
         fontWeight: FontWeights.medium,
+    },
+
+    // ========== 侧滑删除样式 ==========
+    rightActionContainer: {
+        width: 80,
+        height: '100%',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    rightAction: {
+        width: '100%',
+        height: '100%',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    deleteButton: {
+        width: 60,
+        height: 60,
+        borderRadius: 30,
+        backgroundColor: Colors.expense,
+        justifyContent: 'center',
+        alignItems: 'center',
+        ...Shadows.sm,
+    },
+    deleteButtonText: {
+        color: '#fff',
+        fontSize: 10,
+        fontWeight: 'bold',
+        marginTop: 2,
+    },
+
+    // ========== 删除确认弹窗样式 ==========
+    deleteModalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    deleteModalContainer: {
+        backgroundColor: Colors.surface,
+        borderRadius: BorderRadius.xl,
+        padding: Spacing.lg,
+        width: '80%',
+        maxWidth: 340,
+        alignItems: 'center',
+        ...Shadows.xl,
+    },
+    deleteModalIconContainer: {
+        width: 64,
+        height: 64,
+        borderRadius: 32,
+        backgroundColor: Colors.expense + '15',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: Spacing.md,
+    },
+    deleteModalTitle: {
+        fontSize: FontSizes.xl,
+        fontWeight: FontWeights.bold,
+        color: Colors.text,
+        marginBottom: Spacing.sm,
+    },
+    deleteModalMessage: {
+        fontSize: FontSizes.md,
+        color: Colors.textSecondary,
+        textAlign: 'center',
+        marginBottom: Spacing.lg,
+        lineHeight: 22,
+    },
+    deletePreviewCard: {
+        width: '100%',
+        backgroundColor: Colors.background,
+        padding: Spacing.md,
+        borderRadius: BorderRadius.md,
+        marginBottom: Spacing.lg,
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+    },
+    deletePreviewText: {
+        flex: 1,
+        fontSize: FontSizes.md,
+        color: Colors.text,
+        marginRight: Spacing.md,
+    },
+    deletePreviewAmount: {
+        fontSize: FontSizes.md,
+        fontWeight: FontWeights.bold,
+    },
+    deleteModalActions: {
+        flexDirection: 'row',
+        gap: Spacing.md,
+        width: '100%',
+    },
+    deleteModalCancelButton: {
+        flex: 1,
+        paddingVertical: Spacing.md,
+        borderRadius: BorderRadius.lg,
+        backgroundColor: Colors.backgroundSecondary,
+        alignItems: 'center',
+    },
+    deleteModalCancelText: {
+        fontSize: FontSizes.md,
+        fontWeight: FontWeights.semibold,
+        color: Colors.text,
+    },
+    deleteModalConfirmButton: {
+        flex: 1,
+        paddingVertical: Spacing.md,
+        borderRadius: BorderRadius.lg,
+        backgroundColor: Colors.expense,
+        alignItems: 'center',
+    },
+    deleteModalConfirmText: {
+        fontSize: FontSizes.md,
+        fontWeight: FontWeights.semibold,
+        color: '#fff',
     },
 });

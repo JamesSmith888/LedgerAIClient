@@ -1,6 +1,7 @@
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { AddTransactionScreen, GiftedChatScreen, ProfileScreen, TransactionListScreen } from '../screens';
+import { AddTransactionScreen, AgentScreen, ProfileScreen, TransactionListScreen } from '../screens';
 import { ReportScreen } from '../screens/ReportScreen';
+// import { GiftedChatScreen } from '../screens'; // 已停用，使用 AgentScreen
 import { Colors } from '../constants/theme.ts';
 import { Icon } from '../components/common';
 
@@ -9,22 +10,25 @@ const Tab = createBottomTabNavigator();
 export const BottomTabNavigator = () => {
   return (
     <Tab.Navigator
-      screenOptions={{
+      screenOptions={({ route }) => ({
         headerShown: false, // 隐藏顶部导航栏
         tabBarActiveTintColor: Colors.primary, // 选中时的颜色
         tabBarInactiveTintColor: Colors.textSecondary, // 未选中时的颜色
-        tabBarStyle: {
-          backgroundColor: Colors.surface,
-          borderTopColor: Colors.divider,
-          height: 60,
-          paddingBottom: 8,
-          paddingTop: 8,
-        },
+        // 动态控制底部导航栏显示：Agent页面隐藏，其他页面显示
+        tabBarStyle: route.name === 'Agent' 
+          ? { display: 'none' }
+          : {
+              backgroundColor: Colors.surface,
+              borderTopColor: Colors.divider,
+              height: 60,
+              paddingBottom: 8,
+              paddingTop: 8,
+            },
         tabBarLabelStyle: {
           fontSize: 12,
           fontWeight: '600',
         },
-      }}
+      })}
     >
       {/* 首页 记账列表 */}
       <Tab.Screen
@@ -52,7 +56,7 @@ export const BottomTabNavigator = () => {
 
       <Tab.Screen
         name="Agent"
-        component={GiftedChatScreen}
+        component={AgentScreen}
         options={{
           tabBarLabel: 'Agent',
           tabBarIcon: ({ color, size }) => (

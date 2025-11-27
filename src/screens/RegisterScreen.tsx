@@ -98,6 +98,7 @@ const handleRegister = async () => {
       email: response.email,
       avatarUrl: response.avatarUrl,
       avatar: response.avatarUrl,
+      role: response.role, // 添加用户角色
       createdAt: response.createdAt,
     };
 
@@ -159,6 +160,7 @@ const handleAlipayRegister = async () => {
       email: response.email,
       avatarUrl: response.avatarUrl,
       avatar: response.avatarUrl,
+      role: response.role, // 添加用户角色
       createdAt: response.createdAt,
     };
 

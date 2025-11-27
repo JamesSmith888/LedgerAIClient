@@ -14,6 +14,7 @@ interface CustomLineChartProps {
     height?: number;
     showIncome?: boolean;
     showExpense?: boolean;
+    onDataPointClick?: (point: TrendDataPoint) => void;
 }
 
 export const CustomLineChart: React.FC<CustomLineChartProps> = ({
@@ -22,6 +23,7 @@ export const CustomLineChart: React.FC<CustomLineChartProps> = ({
     height = 220,
     showIncome = true,
     showExpense = true,
+    onDataPointClick,
 }) => {
     // 数据集
     const datasets: any[] = [];
@@ -103,6 +105,15 @@ export const CustomLineChart: React.FC<CustomLineChartProps> = ({
                 withDots={data.length <= 31}  // 数据点较多时隐藏圆点
                 withShadow={false}
                 segments={4}  // 水平线段数
+                formatYLabel={(yValue) => {
+                    const value = parseFloat(yValue);
+                    return value === 0 ? '-' : value.toString();
+                }}
+                onDataPointClick={({ index }) => {
+                    if (onDataPointClick && data[index]) {
+                        onDataPointClick(data[index]);
+                    }
+                }}
             />
         </View>
     );

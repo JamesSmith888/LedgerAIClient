@@ -82,11 +82,46 @@ export const ProfileScreen: React.FC = () => {
                     </View>
                     <Icon name={AppIcons.chevronForward} size={20} color={Colors.textSecondary} />
                 </TouchableOpacity>
+
+                <View style={styles.divider} />
+
+                <TouchableOpacity
+                    style={styles.menuItem}
+                    onPress={() => (navigation as any).navigate('CategoryManagement')}
+                >
+                    <Icon name="pricetag-outline" size={24} color={Colors.primary} />
+                    <View style={styles.menuTextContainer}>
+                        <Text style={styles.menuText}>分类管理</Text>
+                        <Text style={styles.menuSubtext}>
+                            管理你的交易分类
+                        </Text>
+                    </View>
+                    <Icon name={AppIcons.chevronForward} size={20} color={Colors.textSecondary} />
+                </TouchableOpacity>
+
+                <View style={styles.divider} />
+
+                <TouchableOpacity
+                    style={styles.menuItem}
+                    onPress={() => (navigation as any).navigate('TemplateManagement')}
+                >
+                    <Icon name={AppIcons.listOutline} size={24} color={Colors.primary} />
+                    <View style={styles.menuTextContainer}>
+                        <Text style={styles.menuText}>交易模板</Text>
+                        <Text style={styles.menuSubtext}>
+                            快速记账模板
+                        </Text>
+                    </View>
+                    <Icon name={AppIcons.chevronForward} size={20} color={Colors.textSecondary} />
+                </TouchableOpacity>
             </View>
 
             {/* 菜单选项 */}
             <View style={styles.menuSection}>
-                <TouchableOpacity style={styles.menuItem}>
+                <TouchableOpacity
+                    style={styles.menuItem}
+                    onPress={() => (navigation as any).navigate('Settings')}
+                >
                     <Icon name={AppIcons.settingsOutline} size={24} color={Colors.textSecondary} />
                     <Text style={styles.menuText}>设置</Text>
                     <Icon name={AppIcons.chevronForward} size={20} color={Colors.textSecondary} />
@@ -102,6 +137,8 @@ export const ProfileScreen: React.FC = () => {
                     <Text style={styles.menuText}>帮助与反馈</Text>
                     <Icon name={AppIcons.chevronForward} size={20} color={Colors.textSecondary} />
                 </TouchableOpacity>
+
+                <View style={styles.divider} />
             </View>
 
             {/* 退出登录按钮 */}

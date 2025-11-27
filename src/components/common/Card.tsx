@@ -2,10 +2,10 @@
  * 通用卡片组件
  */
 import React from 'react';
-import { View, StyleSheet, ViewStyle } from 'react-native';
+import { View, StyleSheet, ViewStyle, ViewProps } from 'react-native';
 import { Colors, Spacing, BorderRadius, Shadows } from '../../constants/theme';
 
-interface CardProps {
+interface CardProps extends ViewProps {
   children: React.ReactNode;
   style?: ViewStyle;
   variant?: 'default' | 'outlined' | 'flat';
@@ -15,9 +15,10 @@ export const Card: React.FC<CardProps> = ({
   children,
   style,
   variant = 'default',
+  ...rest
 }) => {
   return (
-    <View style={[styles.card, styles[`card_${variant}`], style]}>
+    <View style={[styles.card, styles[`card_${variant}`], style]} {...rest}>
       {children}
     </View>
   );

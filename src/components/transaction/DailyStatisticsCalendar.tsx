@@ -241,24 +241,39 @@ export const DailyStatisticsCalendar: React.FC<DailyStatisticsCalendarProps> = (
                                             {/* 背景分割层 */}
                                             {hasData && !isFutureDay ? (
                                                 <View style={styles.splitBackground}>
-                                                    {/* 左上角：支出（红色） */}
-                                                    <View style={[
-                                                        styles.expenseTriangle,
-                                                        {
-                                                            opacity: stat.expense > 0 ? 
-                                                                Math.min(0.3 + (stat.expense / 1000) * 0.7, 1) : 
-                                                                0.1
-                                                        }
-                                                    ]} />
-                                                    {/* 右下角：收入（绿色） */}
-                                                    <View style={[
-                                                        styles.incomeTriangle,
-                                                        {
-                                                            opacity: stat.income > 0 ? 
-                                                                Math.min(0.3 + (stat.income / 1000) * 0.7, 1) : 
-                                                                0.1
-                                                        }
-                                                    ]} />
+                                                    {(() => {
+                                                        const total = stat.expense + stat.income;
+                                                        const expenseRatio = total > 0 ? stat.expense / total : 0.5;
+                                                        const incomeRatio = total > 0 ? stat.income / total : 0.5;
+                                                        
+                                                        // 计算透明度（基于金额大小）
+                                                        // 适度透明度，确保文字清晰可见且背景色适当可见
+                                                        const expenseOpacity = stat.expense > 0 ? 
+                                                            Math.min(0.1 + (stat.expense / 1000) * 0.3, 0.35) : 0.08;
+                                                        const incomeOpacity = stat.income > 0 ? 
+                                                            Math.min(0.1 + (stat.income / 1000) * 0.3, 0.35) : 0.08;
+                                                        
+                                                        return (
+                                                            <>
+                                                                {/* 左侧：支出（红色） */}
+                                                                <View style={[
+                                                                    styles.expenseBar,
+                                                                    {
+                                                                        width: `${expenseRatio * 100}%`,
+                                                                        opacity: expenseOpacity,
+                                                                    }
+                                                                ]} />
+                                                                {/* 右侧：收入（绿色） */}
+                                                                <View style={[
+                                                                    styles.incomeBar,
+                                                                    {
+                                                                        width: `${incomeRatio * 100}%`,
+                                                                        opacity: incomeOpacity,
+                                                                    }
+                                                                ]} />
+                                                            </>
+                                                        );
+                                                    })()}
                                                 </View>
                                             ) : null}
                                             
@@ -274,18 +289,14 @@ export const DailyStatisticsCalendar: React.FC<DailyStatisticsCalendarProps> = (
                                             </Text>
                                             
                                             {/* 收支金额显示 */}
-                                            {hasData && !isFutureDay && (
+                                            {date && !isFutureDay && (
                                                 <View style={styles.amountContainer}>
-                                                    {stat.expense > 0 && (
-                                                        <Text style={styles.expenseAmount}>
-                                                            -{formatAmount(stat.expense)}
-                                                        </Text>
-                                                    )}
-                                                    {stat.income > 0 && (
-                                                        <Text style={styles.incomeAmount}>
-                                                            +{formatAmount(stat.income)}
-                                                        </Text>
-                                                    )}
+                                                    <Text style={stat && stat.expense > 0 ? styles.expenseAmount : styles.emptyAmount}>
+                                                        {stat && stat.expense > 0 ? `-${formatAmount(stat.expense)}` : '-'}
+                                                    </Text>
+                                                    <Text style={stat && stat.income > 0 ? styles.incomeAmount : styles.emptyAmount}>
+                                                        {stat && stat.income > 0 ? `+${formatAmount(stat.income)}` : '-'}
+                                                    </Text>
                                                 </View>
                                             )}
                                         </>
@@ -388,7 +399,7 @@ export const DailyStatisticsCalendar: React.FC<DailyStatisticsCalendarProps> = (
             </Modal>
 
             {/* 底部统计摘要 */}
-            <View style={styles.summary}>
+{/*             <View style={styles.summary}>
                 <View style={styles.summaryItem}>
                     <Icon name="arrow-up-circle" size={16} color={Colors.income} />
                     <Text style={styles.summaryLabel}>总收入</Text>
@@ -412,20 +423,15 @@ export const DailyStatisticsCalendar: React.FC<DailyStatisticsCalendarProps> = (
                         {statistics.reduce((sum, s) => sum + s.count, 0)}
                     </Text>
                 </View>
-            </View>
+            </View> */}
         </View>
     );
 };
 
 const styles = StyleSheet.create({
     container: {
-        backgroundColor: Colors.surface,
-        borderRadius: BorderRadius.lg,
-        padding: Spacing.md,
-        marginBottom: Spacing.md,
-        borderWidth: 1,
-        borderColor: Colors.border + '30',
-        ...Shadows.sm,
+        // 移除卡片样式，使其融入父容器
+        paddingTop: Spacing.sm,
     },
     header: {
         flexDirection: 'row',
@@ -497,12 +503,12 @@ const styles = StyleSheet.create({
     },
     dayCellToday: {
         borderColor: Colors.primary,
-        borderWidth: 2,
+        borderWidth: 1.5,
     },
     dayCellFuture: {
         opacity: 0.3,
     },
-    // 双色分割背景
+    // 双色分割背景（垂直分割）
     splitBackground: {
         position: 'absolute',
         top: 0,
@@ -511,41 +517,23 @@ const styles = StyleSheet.create({
         bottom: 0,
         width: '100%',
         height: '100%',
+        flexDirection: 'row',
     },
-    expenseTriangle: {
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        width: 0,
-        height: 0,
-        borderStyle: 'solid',
-        borderLeftWidth: 50,
-        borderRightWidth: 0,
-        borderTopWidth: 50,
-        borderBottomWidth: 0,
-        borderLeftColor: 'transparent',
-        borderTopColor: Colors.expense,
+    expenseBar: {
+        height: '100%',
+        backgroundColor: Colors.expense,
     },
-    incomeTriangle: {
-        position: 'absolute',
-        bottom: 0,
-        right: 0,
-        width: 0,
-        height: 0,
-        borderStyle: 'solid',
-        borderLeftWidth: 0,
-        borderRightWidth: 50,
-        borderTopWidth: 0,
-        borderBottomWidth: 50,
-        borderRightColor: 'transparent',
-        borderBottomColor: Colors.income,
+    incomeBar: {
+        height: '100%',
+        backgroundColor: Colors.income,
     },
     dayNumber: {
-        fontSize: FontSizes.sm,
+        fontSize: 11,
         fontWeight: FontWeights.bold,
         color: Colors.text,
-        marginBottom: 2,
+        marginBottom: 1,
         zIndex: 10,
+        lineHeight: 13,
     },
     dayNumberToday: {
         color: Colors.primary,
@@ -554,24 +542,41 @@ const styles = StyleSheet.create({
     dayNumberFuture: {
         color: Colors.textLight,
     },
-    // 金额容器
+    // 金额容器 - 添加尺寸约束防止溢出
     amountContainer: {
+        width: '100%',
         alignItems: 'center',
         justifyContent: 'center',
         zIndex: 10,
+        paddingHorizontal: 1,
     },
     expenseAmount: {
-        fontSize: 8,
+        fontSize: 7,
         fontWeight: FontWeights.bold,
         color: Colors.expense,
-        textShadowColor: 'rgba(255, 255, 255, 0.8)',
+        lineHeight: 9,
+        // 增强文字阴影，提高对比度
+        textShadowColor: 'rgba(255, 255, 255, 1)',
         textShadowOffset: { width: 0, height: 0 },
-        textShadowRadius: 2,
+        textShadowRadius: 3,
     },
     incomeAmount: {
-        fontSize: 8,
+        fontSize: 7,
         fontWeight: FontWeights.bold,
         color: Colors.income,
+        lineHeight: 9,
+        // 增强文字阴影，提高对比度
+        textShadowColor: 'rgba(255, 255, 255, 1)',
+        textShadowOffset: { width: 0, height: 0 },
+        textShadowRadius: 3,
+    },
+    emptyAmount: {
+        fontSize: 7,
+        color: Colors.textSecondary, // 加深颜色
+        fontWeight: FontWeights.medium,
+        lineHeight: 9,
+        // 移除透明度，确保可见
+        // 添加阴影以适应有色背景
         textShadowColor: 'rgba(255, 255, 255, 0.8)',
         textShadowOffset: { width: 0, height: 0 },
         textShadowRadius: 2,

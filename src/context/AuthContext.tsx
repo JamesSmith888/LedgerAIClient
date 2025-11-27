@@ -9,6 +9,7 @@ interface AuthContextType {
   isLoading: boolean;
   login: (user: User, token: string) => Promise<void>;
   logout: () => Promise<void>;
+  updateUser: (updatedUser: Partial<User>) => Promise<void>;
   isAuthenticated: boolean;
 }
 
@@ -63,6 +64,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     await authAPI.logout();
   };
 
+  const updateUser = async (updatedUser: Partial<User>) => {
+    if (!user) {
+      throw new Error('User not authenticated');
+    }
+
+    const newUser = { ...user, ...updatedUser };
+    setUser(newUser);
+
+    // 更新本地存储的用户信息
+    await AsyncStorage.setItem('user', JSON.stringify(newUser));
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -71,6 +84,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         isLoading,
         login,
         logout,
+        updateUser,
         isAuthenticated: !!user && !!token,
       }}
     >

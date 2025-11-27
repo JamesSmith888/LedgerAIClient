@@ -48,4 +48,6 @@ export interface StorageOption {
   icon: string;
   pros: string[];
   cons: string[];
+  disabled?: boolean; // 是否禁用
+  disabledReason?: string; // 禁用原因
 }

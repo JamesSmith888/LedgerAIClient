@@ -6,6 +6,7 @@ import React, {
     useCallback,
     ReactNode,
 } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { toast } from '../utils/toast';
 import type { Ledger } from '../types/ledger';
 import { ledgerAPI, userAPI } from '../api/services';
@@ -56,6 +57,27 @@ export const LedgerProvider: React.FC<LedgerProviderProps> = ({ children }) => {
     const [defaultLedgerId, setDefaultLedgerId] = useState<number | null>(null);
     const [isLoading, setIsLoading] = useState<boolean>(false);
 
+    // ========== 辅助函数：同步账本到 AsyncStorage ==========
+    const syncLedgerToStorage = async (ledger: Ledger | null) => {
+        try {
+            if (ledger) {
+                await AsyncStorage.setItem('currentLedger', JSON.stringify(ledger));
+                console.log('[LedgerContext] 同步 currentLedger 到 AsyncStorage:', ledger.id, ledger.name);
+            } else {
+                await AsyncStorage.removeItem('currentLedger');
+                console.log('[LedgerContext] 清除 AsyncStorage 中的 currentLedger');
+            }
+        } catch (error) {
+            console.error('[LedgerContext] 同步 currentLedger 失败:', error);
+        }
+    };
+
+    // ========== 设置当前账本状态（内部使用，会同步到 AsyncStorage）==========
+    const setCurrentLedgerWithSync = async (ledger: Ledger | null) => {
+        setCurrentLedgerState(ledger);
+        await syncLedgerToStorage(ledger);
+    };
+
     // ========== 初始化加载 - 只在用户已认证后执行 ==========
     useEffect(() => {
         // 等待认证状态加载完成，且用户已登录后才加载数据
@@ -66,7 +88,7 @@ export const LedgerProvider: React.FC<LedgerProviderProps> = ({ children }) => {
             // 用户未登录，清空数据
             console.log('[LedgerContext] 用户未认证，清空账本数据');
             setLedgers([]);
-            setCurrentLedgerState(null);
+            setCurrentLedgerWithSync(null);
             setDefaultLedgerId(null);
         }
     }, [authLoading, isAuthenticated]);
@@ -90,7 +112,7 @@ export const LedgerProvider: React.FC<LedgerProviderProps> = ({ children }) => {
             if (defaultId && ledgersData) {
                 const defaultLedger = ledgersData.find(l => l.id === defaultId);
                 if (defaultLedger) {
-                    setCurrentLedgerState(defaultLedger);
+                    await setCurrentLedgerWithSync(defaultLedger);
                     console.log('自动选择默认账本:', defaultLedger);
                     return;
                 }
@@ -98,7 +120,7 @@ export const LedgerProvider: React.FC<LedgerProviderProps> = ({ children }) => {
 
             // 如果没有默认账本或找不到默认账本，选择第一个
             if (!currentLedger && (ledgersData?.length ?? 0) > 0) {
-                setCurrentLedgerState(ledgersData[0]);
+                await setCurrentLedgerWithSync(ledgersData[0]);
                 console.log('自动选择第一个账本:', ledgersData[0]);
             }
         } catch (error) {
@@ -121,21 +143,21 @@ export const LedgerProvider: React.FC<LedgerProviderProps> = ({ children }) => {
             if (currentLedger) {
                 const updated = data.find(l => l.id === currentLedger.id);
                 if (updated) {
-                    setCurrentLedgerState(updated);
+                    await setCurrentLedgerWithSync(updated);
                 } else {
                     // 如果当前账本已被删除，重置选择
                     if (data.length > 0) {
                         // 优先选择默认账本
                         const defaultLedger = defaultLedgerId ? data.find(l => l.id === defaultLedgerId) : null;
-                        setCurrentLedgerState(defaultLedger || data[0]);
+                        await setCurrentLedgerWithSync(defaultLedger || data[0]);
                     } else {
-                        setCurrentLedgerState(null);
+                        await setCurrentLedgerWithSync(null);
                     }
                 }
             } else if ((data?.length ?? 0) > 0) {
                 // 如果还没有选中账本，选择默认账本或第一个
                 const defaultLedger = defaultLedgerId ? data.find(l => l.id === defaultLedgerId) : null;
-                setCurrentLedgerState(defaultLedger || data[0]);
+                await setCurrentLedgerWithSync(defaultLedger || data[0]);
             }
         } catch (error) {
             console.error('加载账本列表失败:', error);
@@ -151,8 +173,8 @@ export const LedgerProvider: React.FC<LedgerProviderProps> = ({ children }) => {
     }, []);
 
     // ========== 切换当前账本 ==========
-    const setCurrentLedger = useCallback((ledger: Ledger) => {
-        setCurrentLedgerState(ledger);
+    const setCurrentLedger = useCallback(async (ledger: Ledger) => {
+        await setCurrentLedgerWithSync(ledger);
     }, []);
 
     // ========== 设置默认账本 ==========
@@ -164,7 +186,7 @@ export const LedgerProvider: React.FC<LedgerProviderProps> = ({ children }) => {
             
             // 同时切换当前账本
             if (ledger) {
-                setCurrentLedgerState(ledger);
+                await setCurrentLedgerWithSync(ledger);
             }
             
             toast.success(ledger ? `已设置「${ledger.name}」为默认账本` : '已清除默认账本');
@@ -207,7 +229,7 @@ export const LedgerProvider: React.FC<LedgerProviderProps> = ({ children }) => {
             // 如果删除的是当前账本，切换到第一个账本
             if (currentLedger?.id === id) {
                 const remaining = ledgers.filter(l => l.id !== id);
-                setCurrentLedgerState(remaining.length > 0 ? remaining[0] : null);
+                await setCurrentLedgerWithSync(remaining.length > 0 ? remaining[0] : null);
             }
 
             await refreshLedgers();

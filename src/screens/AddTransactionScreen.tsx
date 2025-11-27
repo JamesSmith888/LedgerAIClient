@@ -4,7 +4,9 @@ import {
   Alert,
   FlatList,
   Keyboard,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -27,13 +29,14 @@ import { useAuth } from '../context/AuthContext';
 import { toast } from '../utils/toast';
 import { showConfirm } from '../utils/toast';
 import type { Category, Transaction, TransactionType } from '../types/transaction';
+import type { Ledger } from '../types/ledger';
 import { LedgerType } from '../types/ledger';
 import { CategorySelector } from '../components/transaction/CategorySelector';
 import { NumberKeypad } from '../components/transaction/NumberKeypad';
 import { LedgerSelector } from '../components/ledger/LedgerSelector';
 import { useCategories } from '../context/CategoryContext';
 import { useLedger } from '../context/LedgerContext';
-import { transactionAPI } from '../api/services';
+import { transactionAPI, categoryAPI } from '../api/services';
 import { CategoryPicker } from '../components/transaction/CategoryPicker';
 import { DatePicker } from '../components/transaction/DatePicker';
 import { PaymentMethodPicker } from '../components/transaction/PaymentMethodPicker';
@@ -52,6 +55,7 @@ interface AddTransactionScreenProps {
   route?: {
     params?: {
       transaction?: Transaction; // 如果传入 transaction，则为编辑模式
+      selectedLedger?: Ledger | null; // 从列表页传入的选中账本
     };
   };
 }
@@ -63,6 +67,9 @@ export const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({ rout
   // 编辑模式判断
   const editingTransaction = route?.params?.transaction;
   const isEditMode = !!editingTransaction;
+  
+  // 获取列表页传入的选中账本
+  const selectedLedgerFromList = route?.params?.selectedLedger;
 
   // 使用 ref 保存导航对象，避免在异步回调中失效
   const navigationRef = useRef(navigation);
@@ -77,6 +84,19 @@ export const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({ rout
   const { expenseCategories, incomeCategories, isLoading: categoriesLoading } = useCategories();
   const { ledgers, currentLedger, setCurrentLedger } = useLedger();
   const { paymentMethods, defaultPaymentMethod } = usePaymentMethod();
+  
+  // ========== 初始化账本选择逻辑 ==========
+  // 在组件挂载时，如果是新增模式且传入了选中账本，则使用它
+  useEffect(() => {
+    if (!isEditMode && selectedLedgerFromList && currentLedger?.id !== selectedLedgerFromList.id) {
+      console.log('使用列表页选中的账本:', selectedLedgerFromList);
+      setCurrentLedger(selectedLedgerFromList);
+    }
+  }, []);
+
+  // 常用分类状态
+  const [frequentExpenseCategories, setFrequentExpenseCategories] = useState<Category[]>([]);
+  const [frequentIncomeCategories, setFrequentIncomeCategories] = useState<Category[]>([]);
 
   // 记账核心状态（编辑模式时初始化为原有数据）
   const [transactionType, setTransactionType] = useState<TransactionType>(
@@ -92,6 +112,23 @@ export const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({ rout
     editingTransaction ? new Date(editingTransaction.transactionDateTime) : new Date()
   );
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<PaymentMethod | undefined>(undefined);
+
+  // Refs to track state for useFocusEffect without adding dependencies
+  const selectedCategoryRef = useRef(selectedCategory);
+  const selectedPaymentMethodRef = useRef(selectedPaymentMethod);
+  const isEditInitialized = useRef(false);
+
+  useEffect(() => {
+    selectedCategoryRef.current = selectedCategory;
+  }, [selectedCategory]);
+
+  useEffect(() => {
+    selectedPaymentMethodRef.current = selectedPaymentMethod;
+  }, [selectedPaymentMethod]);
+
+  useEffect(() => {
+    isEditInitialized.current = false;
+  }, [editingTransaction?.id]);
 
   // 附件状态
   const [attachments, setAttachments] = useState<Array<{uri: string; fileName?: string; type?: string; fileSize?: number; isExisting?: boolean}>>([]);
@@ -109,6 +146,22 @@ export const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({ rout
   const [showPaymentMethodPicker, setShowPaymentMethodPicker] = useState(false);
 
   // ========== 初始化和副作用 ==========
+  // 加载常用分类
+  useEffect(() => {
+    const loadFrequentCategories = async () => {
+      try {
+        const [expenseFrequent, incomeFrequent] = await Promise.all([
+          categoryAPI.getFrequentCategories('EXPENSE'),
+          categoryAPI.getFrequentCategories('INCOME'),
+        ]);
+        setFrequentExpenseCategories(expenseFrequent);
+        setFrequentIncomeCategories(incomeFrequent);
+      } catch (error) {
+        console.error('加载常用分类失败:', error);
+      }
+    };
+    loadFrequentCategories();
+  }, []);
   // 切换收支类型时，重置分类和金额
   useEffect(() => {
     setSelectedCategory(undefined);
@@ -181,34 +234,47 @@ export const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({ rout
     useCallback(() => {
       // 编辑模式：查找对应的分类和支付方式
       if (isEditMode && editingTransaction) {
+        // 如果已经初始化过，就不再重置
+        if (isEditInitialized.current) return;
+
         const categories = editingTransaction.type === 'EXPENSE' ? expenseCategories : incomeCategories;
-        const category = categories.find(c => c.id === editingTransaction.categoryId);
-        if (category) {
-          setSelectedCategory(category);
+        
+        // 尝试初始化分类
+        if (categories.length > 0) {
+            const category = categories.find(c => c.id === editingTransaction.categoryId);
+            if (category) {
+              setSelectedCategory(category);
+            }
         }
         
-        // 设置支付方式
-        if (editingTransaction.paymentMethodId) {
+        // 尝试初始化支付方式
+        if (editingTransaction.paymentMethodId && paymentMethods.length > 0) {
           const paymentMethod = paymentMethods.find(p => p.id === editingTransaction.paymentMethodId);
           if (paymentMethod) {
             setSelectedPaymentMethod(paymentMethod);
           }
         }
+
+        // 只要分类列表已加载，就标记为已初始化
+        if (categories.length > 0) {
+            isEditInitialized.current = true;
+        }
         return;
       }
       
       // 新增模式：默认选中第一个分类和默认支付方式
-      if (transactionType === 'EXPENSE' && expenseCategories.length > 0 && !selectedCategory) {
+      // 使用 ref 检查当前值，避免将 state 加入依赖导致循环
+      if (transactionType === 'EXPENSE' && expenseCategories.length > 0 && !selectedCategoryRef.current) {
         setSelectedCategory(expenseCategories[0]);
-      } else if (transactionType === 'INCOME' && incomeCategories.length > 0 && !selectedCategory) {
+      } else if (transactionType === 'INCOME' && incomeCategories.length > 0 && !selectedCategoryRef.current) {
         setSelectedCategory(incomeCategories[0]);
       }
       
       // 设置默认支付方式
-      if (!selectedPaymentMethod && defaultPaymentMethod) {
+      if (!selectedPaymentMethodRef.current && defaultPaymentMethod) {
         setSelectedPaymentMethod(defaultPaymentMethod);
       }
-    }, [expenseCategories, incomeCategories, transactionType, isEditMode, editingTransaction, selectedCategory, paymentMethods, defaultPaymentMethod, selectedPaymentMethod])
+    }, [expenseCategories, incomeCategories, transactionType, isEditMode, editingTransaction, paymentMethods, defaultPaymentMethod])
   );
 
   // ========== 事件处理 ==========
@@ -549,12 +615,17 @@ export const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({ rout
         {!isEditMode && <View style={styles.headerPlaceholder} />}
       </View>
 
-      <ScrollView 
-        style={styles.scrollView}
-        contentContainerStyle={styles.contentContainer}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
+      <KeyboardAvoidingView
+        style={styles.keyboardAvoidingView}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
       >
+        <ScrollView 
+          style={styles.scrollView}
+          contentContainerStyle={styles.contentContainer}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
         {/* ========== 区域1: 金额 & 收支类型 ========== */}
         <View style={styles.amountSection}>
           {/* 收支切换 */}
@@ -675,6 +746,51 @@ export const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({ rout
               <Text style={styles.detailArrow}>›</Text>
             </View>
           </TouchableOpacity>
+
+          {/* 常用分类快捷选择 */}
+          {(transactionType === 'EXPENSE' ? frequentExpenseCategories : frequentIncomeCategories).length > 0 && (
+            <View style={styles.frequentCategoriesRow}>
+              <View style={styles.frequentCategoriesLabel}>
+                <Icon name="star" size={14} color={Colors.accent.yellow} />
+                <Text style={styles.frequentCategoriesLabelText}>常用</Text>
+              </View>
+              <ScrollView 
+                horizontal 
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.frequentCategoriesScroll}
+              >
+                {(transactionType === 'EXPENSE' ? frequentExpenseCategories : frequentIncomeCategories).map(category => {
+                  const isActive = selectedCategory?.id === category.id;
+                  return (
+                    <TouchableOpacity
+                      key={category.id}
+                      style={[
+                        styles.frequentCategoryChip,
+                        isActive && styles.frequentCategoryChipActive,
+                      ]}
+                      onPress={() => setSelectedCategory(category)}
+                      activeOpacity={0.7}
+                    >
+                      <CategoryIcon icon={category.icon} size={16} color={isActive ? Colors.primary : Colors.textSecondary} />
+                      <Text
+                        style={[
+                          styles.frequentCategoryChipText,
+                          isActive && styles.frequentCategoryChipTextActive,
+                        ]}
+                      >
+                        {category.name}
+                      </Text>
+                      {category.isRecommended && (
+                        <View style={styles.recommendedBadge}>
+                          <Text style={styles.recommendedBadgeText}>荐</Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          )}
 
           {/* 账本 */}
           {ledgers.length > 1 && (
@@ -819,6 +935,7 @@ export const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({ rout
           )}
         </TouchableOpacity>
       </View>
+      </KeyboardAvoidingView>
 
       {/* ========== 分类选择器 Modal ========== */}
       <CategoryPicker
@@ -951,6 +1068,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.backgroundSecondary,
+  },
+  keyboardAvoidingView: {
+    flex: 1,
   },
   scrollView: {
     flex: 1,
@@ -1141,6 +1261,64 @@ const styles = StyleSheet.create({
     fontSize: FontSizes.lg,
     color: Colors.text,
     paddingVertical: Spacing.sm,
+  },
+
+  // ========== 常用分类区域 ==========
+  frequentCategoriesRow: {
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  frequentCategoriesLabel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    marginBottom: Spacing.sm,
+  },
+  frequentCategoriesLabelText: {
+    fontSize: FontSizes.sm,
+    color: Colors.textSecondary,
+    fontWeight: FontWeights.medium,
+  },
+  frequentCategoriesScroll: {
+    paddingRight: Spacing.md,
+  },
+  frequentCategoryChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.xs,
+    borderRadius: BorderRadius.lg,
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginRight: Spacing.sm,
+  },
+  frequentCategoryChipActive: {
+    backgroundColor: Colors.primary + '15',
+    borderColor: Colors.primary,
+  },
+  frequentCategoryChipText: {
+    fontSize: FontSizes.sm,
+    color: Colors.textSecondary,
+    fontWeight: FontWeights.medium,
+  },
+  frequentCategoryChipTextActive: {
+    color: Colors.primary,
+  },
+  recommendedBadge: {
+    backgroundColor: Colors.accent.orange,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 4,
+    marginLeft: 2,
+  },
+  recommendedBadgeText: {
+    fontSize: 10,
+    color: Colors.surface,
+    fontWeight: FontWeights.bold,
   },
 
   // ========== 附件区域 ==========

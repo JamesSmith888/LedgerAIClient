@@ -2,7 +2,7 @@
  * 图表主页面
  * 提供多维度数据分析和可视化
  */
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import {
     View,
     Text,
@@ -10,31 +10,73 @@ import {
     ScrollView,
     Pressable,
     RefreshControl,
+    Modal,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Ionicons';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { Colors, Spacing, FontSizes, FontWeights, BorderRadius, Shadows } from '../constants/theme';
 import { BaseChart, CustomPieChart, CustomLineChart, CustomBarChart, CategoryLineChart } from '../components/charts';
 import { useLedger } from '../context/LedgerContext';
+import { useAuth } from '../context/AuthContext';
 import { LedgerSelector } from '../components/ledger/LedgerSelector';
+import { LedgerMembers } from '../components/ledger/LedgerMembers';
 import { reportAPI } from '../api/services/reportAPI';
-import type { CategoryStatistics, TrendStatistics, TimeGranularity } from '../types/report';
-import type { Ledger } from '../types/ledger';
+import type { CategoryStatistics, TrendStatistics, TimeGranularity, TrendDataPoint } from '../types/report';
+import { Ledger, LedgerType } from '../types/ledger';
 import { toast } from '../utils/toast';
+import { formatCurrency } from '../utils/helpers';
 
 type TabType = 'category' | 'trend' | 'dimension';
 type ChartType = 'pie' | 'bar' | 'line';
-type TimeRangePreset = 'week' | 'month' | 'quarter' | 'year';
+type TimeRangePreset = 'day' | 'week' | 'month' | 'quarter' | 'year';
 type DimensionType = 'category' | 'paymentMethod' | 'ledger';
 
 export const ReportScreen: React.FC = () => {
     const insets = useSafeAreaInsets();
-    const { ledgers } = useLedger();
+    const { ledgers, currentLedger, defaultLedgerId, setCurrentLedger } = useLedger();
+    const { user } = useAuth();
+    const currentUserId = user?._id ? Number(user._id) : null;
 
     // ========== 状态管理 ==========
     // 筛选账本（用于报表数据过滤）
     const [filterLedger, setFilterLedger] = useState<Ledger | null>(null);
+    // 记录上一次的默认账本 ID（用于检测默认账本是否变化）
+    const [prevDefaultLedgerId, setPrevDefaultLedgerId] = useState<number | null>(null);
+
+    // 管理默认账本的自动选中逻辑（与 TransactionListScreen 保持一致）
+    useEffect(() => {
+        if (!ledgers.length) return;
+
+        // 场景1：初始加载（filterLedger 为 null 且 prevDefaultLedgerId 也为 null，说明是首次加载）
+        if (!filterLedger && !prevDefaultLedgerId && defaultLedgerId) {
+            const defaultLedger = ledgers.find(l => l.id === defaultLedgerId);
+            if (defaultLedger) {
+                setFilterLedger(defaultLedger);
+                setPrevDefaultLedgerId(defaultLedgerId);
+            }
+            return;
+        }
+
+        // 场景2：默认账本变化了（用户在账本管理页面修改了默认账本）
+        if (defaultLedgerId && prevDefaultLedgerId !== defaultLedgerId) {
+            const newDefaultLedger = ledgers.find(l => l.id === defaultLedgerId);
+            if (newDefaultLedger) {
+                // 切换到新的默认账本
+                setFilterLedger(newDefaultLedger);
+                setPrevDefaultLedgerId(defaultLedgerId);
+            }
+        }
+    }, [defaultLedgerId, ledgers, prevDefaultLedgerId]);
+
+    // 监听 currentLedger 变化，实现与交易列表页面的实时同步
+    useEffect(() => {
+        // 如果 currentLedger 变化了，且与当前 filterLedger 不同，则同步更新
+        if (currentLedger && filterLedger?.id !== currentLedger.id) {
+            setFilterLedger(currentLedger);
+        }
+    }, [currentLedger]);
     
     const [activeTab, setActiveTab] = useState<TabType>('category');
     const [chartType, setChartType] = useState<ChartType>('pie');
@@ -53,6 +95,13 @@ export const ReportScreen: React.FC = () => {
     const [isLoading, setIsLoading] = useState(false);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [error, setError] = useState<string | null>(null);
+
+    // 日期选择
+    const [showDatePicker, setShowDatePicker] = useState(false);
+    const [selectedDate, setSelectedDate] = useState(new Date());
+
+    // 选中的数据点（用于展示详情）
+    const [selectedPoint, setSelectedPoint] = useState<TrendDataPoint | null>(null);
 
     // 时间范围（默认当月）
     const [timeRange, setTimeRange] = useState<{ startTime: Date; endTime: Date }>(() => {
@@ -73,6 +122,7 @@ export const ReportScreen: React.FC = () => {
         try {
             setIsLoading(true);
             setError(null);
+            setSelectedPoint(null); // 清除选中的点
 
             if (activeTab === 'category') {
                 // 分类统计：只查询支出
@@ -133,6 +183,14 @@ export const ReportScreen: React.FC = () => {
         let endTime: Date = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
 
         switch (preset) {
+            case 'day':
+                // 如果是按天，默认今天，或者保持当前选中的日期
+                startTime = new Date(selectedDate);
+                startTime.setHours(0, 0, 0, 0);
+                endTime = new Date(selectedDate);
+                endTime.setHours(23, 59, 59, 999);
+                setTimeGranularity('day');
+                break;
             case 'week':
                 startTime = new Date(now);
                 startTime.setDate(now.getDate() - 7);
@@ -160,21 +218,55 @@ export const ReportScreen: React.FC = () => {
         setTimeRange({ startTime, endTime });
     };
 
+    const onDateChange = (event: any, date?: Date) => {
+        setShowDatePicker(false);
+        if (date) {
+            setSelectedDate(date);
+            // 如果当前是按天模式，立即更新时间范围
+            if (selectedTimePreset === 'day') {
+                const startTime = new Date(date);
+                startTime.setHours(0, 0, 0, 0);
+                const endTime = new Date(date);
+                endTime.setHours(23, 59, 59, 999);
+                setTimeRange({ startTime, endTime });
+            }
+        }
+    };
+
     // ========== 渲染函数 ==========
     const renderHeader = () => (
         <View style={styles.header}>
-            {ledgers.length > 1 ? (
-                <LedgerSelector
-                    ledgers={ledgers}
-                    currentLedger={filterLedger}
-                    onSelect={(ledger) => setFilterLedger(ledger)}
-                    mode="dropdown"
-                    showAllOption={true}
+            <View style={styles.headerLeft}>
+                {ledgers.length > 1 ? (
+                    <LedgerSelector
+                        ledgers={ledgers}
+                        currentLedger={filterLedger}
+                        onSelect={(ledger) => {
+                            setFilterLedger(ledger);
+                            // 同步更新 LedgerContext 的 currentLedger，实现与交易列表的同步
+                            if (ledger) {
+                                setCurrentLedger(ledger);
+                            }
+                        }}
+                        mode="dropdown"
+                        showAllOption={true}
+                        defaultLedgerId={defaultLedgerId}
+                        currentUserId={currentUserId}
+                    />
+                ) : (
+                    <Text style={styles.headerTitle}>
+                        {ledgers.length === 1 ? ledgers[0].name : '数据图表'}
+                    </Text>
+                )}
+            </View>
+
+            {/* ✨ 新增：共享账本成员展示 */}
+            {filterLedger && filterLedger.type === LedgerType.SHARED && (
+                <LedgerMembers 
+                    ledgerId={filterLedger.id} 
+                    maxDisplay={3}
+                    avatarSize={28}
                 />
-            ) : (
-                <Text style={styles.headerTitle}>
-                    {ledgers.length === 1 ? ledgers[0].name : '数据图表'}
-                </Text>
             )}
         </View>
     );
@@ -211,23 +303,31 @@ export const ReportScreen: React.FC = () => {
     const renderTimeRangeSelector = () => (
         <View style={styles.compactSelectorRow}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.compactSelectorScroll}>
-                {(['week', 'month', 'quarter', 'year'] as const).map(preset => (
+                {(['day', 'week', 'month', 'quarter', 'year'] as const).map(preset => (
                     <Pressable
                         key={preset}
                         style={[
                             styles.compactButton,
                             selectedTimePreset === preset && styles.compactButtonActive
                         ]}
-                        onPress={() => setTimeRangePreset(preset)}
+                        onPress={() => {
+                            if (preset === 'day' && selectedTimePreset === 'day') {
+                                setShowDatePicker(true);
+                            } else {
+                                setTimeRangePreset(preset);
+                            }
+                        }}
                     >
                         <Text style={[
                             styles.compactButtonText,
                             selectedTimePreset === preset && styles.compactButtonTextActive
                         ]}>
-                            {preset === 'week' && '7天'}
-                            {preset === 'month' && '本月'}
-                            {preset === 'quarter' && '季度'}
-                            {preset === 'year' && '全年'}
+                            {preset === 'day' 
+                                ? (selectedTimePreset === 'day' ? `${selectedDate.getMonth() + 1}/${selectedDate.getDate()}` : '按天')
+                                : preset === 'week' ? '近一周'
+                                : preset === 'month' ? '本月'
+                                : preset === 'quarter' ? '本季'
+                                : '本年'}
                         </Text>
                     </Pressable>
                 ))}
@@ -236,8 +336,6 @@ export const ReportScreen: React.FC = () => {
     );
 
     const renderChartTypeToggle = () => {
-        if (activeTab !== 'category' && activeTab !== 'dimension') return null;
-
         const getChartIcon = (type: ChartType): string => {
             switch (type) {
                 case 'pie': return 'pie-chart-outline';
@@ -247,24 +345,21 @@ export const ReportScreen: React.FC = () => {
         };
 
         return (
-            <>
-                <View style={styles.dividerLine} />
-                <View style={styles.chartTypeIconRow}>
-                    {(['pie', 'bar', 'line'] as const).map(type => (
-                        <Pressable
-                            key={type}
-                            style={[styles.chartIconButton, chartType === type && styles.chartIconButtonActive]}
-                            onPress={() => setChartType(type)}
-                        >
-                            <Icon 
-                                name={getChartIcon(type)} 
-                                size={20} 
-                                color={chartType === type ? Colors.surface : Colors.textSecondary} 
-                            />
-                        </Pressable>
-                    ))}
-                </View>
-            </>
+            <View style={styles.chartTypeIconRow}>
+                {(['pie', 'bar', 'line'] as const).map(type => (
+                    <Pressable
+                        key={type}
+                        style={[styles.chartIconButton, chartType === type && styles.chartIconButtonActive]}
+                        onPress={() => setChartType(type)}
+                    >
+                        <Icon 
+                            name={getChartIcon(type)} 
+                            size={16} 
+                            color={chartType === type ? Colors.surface : Colors.textSecondary} 
+                        />
+                    </Pressable>
+                ))}
+            </View>
         );
     };
 
@@ -311,8 +406,9 @@ export const ReportScreen: React.FC = () => {
                 error={error}
                 isEmpty={isEmpty}
                 title="支出分类分析"
-                subtitle={`总计：¥${categoryData.totalAmount.toFixed(2)} · ${categoryData.totalCount}笔`}
+                subtitle={`总计：${formatCurrency(categoryData.totalAmount)} · ${categoryData.totalCount}笔`}
                 emptyMessage="该时间范围内暂无支出记录"
+                headerRight={renderChartTypeToggle()}
             >
                 {chartType === 'pie' ? (
                     <CustomPieChart data={categoryData.items} />
@@ -349,8 +445,9 @@ export const ReportScreen: React.FC = () => {
                 error={error}
                 isEmpty={isEmpty}
                 title={getDimensionTitle()}
-                subtitle={`总计：¥${dimensionData.totalAmount.toFixed(2)} · ${dimensionData.totalCount}笔`}
+                subtitle={`总计：${formatCurrency(dimensionData.totalAmount)} · ${dimensionData.totalCount}笔`}
                 emptyMessage="该时间范围内暂无数据"
+                headerRight={renderChartTypeToggle()}
             >
                 {chartType === 'pie' ? (
                     <CustomPieChart data={dimensionData.items} />
@@ -377,13 +474,13 @@ export const ReportScreen: React.FC = () => {
                             <View style={styles.summaryItem}>
                                 <Text style={styles.summaryLabel}>总收入</Text>
                                 <Text style={[styles.summaryValue, { color: Colors.income }]}>
-                                    ¥{trendData.summary.totalIncome.toFixed(2)}
+                                    {formatCurrency(trendData.summary.totalIncome)}
                                 </Text>
                             </View>
                             <View style={styles.summaryItem}>
                                 <Text style={styles.summaryLabel}>总支出</Text>
                                 <Text style={[styles.summaryValue, { color: Colors.expense }]}>
-                                    ¥{trendData.summary.totalExpense.toFixed(2)}
+                                    {formatCurrency(trendData.summary.totalExpense)}
                                 </Text>
                             </View>
                         </View>
@@ -395,7 +492,7 @@ export const ReportScreen: React.FC = () => {
                                     styles.summaryValue,
                                     { color: trendData.summary.netBalance >= 0 ? Colors.income : Colors.expense }
                                 ]}>
-                                    ¥{trendData.summary.netBalance.toFixed(2)}
+                                    {formatCurrency(trendData.summary.netBalance)}
                                 </Text>
                             </View>
                             <View style={styles.summaryItem}>
@@ -417,9 +514,77 @@ export const ReportScreen: React.FC = () => {
                     subtitle={`${timeGranularity === 'day' ? '按天' : timeGranularity === 'week' ? '按周' : timeGranularity === 'month' ? '按月' : '按年'}统计`}
                     emptyMessage="该时间范围内暂无数据"
                 >
-                    <CustomLineChart data={trendData.dataPoints} />
+                    <CustomLineChart 
+                        data={trendData.dataPoints} 
+                        onDataPointClick={(point) => setSelectedPoint(point)}
+                    />
                 </BaseChart>
+
+                {/* 数据表格 */}
+                {!isEmpty && (
+                    <View style={styles.tableContainer}>
+                        <Text style={styles.tableTitle}>详细数据</Text>
+                        <View style={styles.tableHeader}>
+                            <Text style={styles.tableHeaderCell}>日期</Text>
+                            <Text style={styles.tableHeaderCell}>收入</Text>
+                            <Text style={styles.tableHeaderCell}>支出</Text>
+                            <Text style={styles.tableHeaderCell}>结余</Text>
+                        </View>
+                        {trendData.dataPoints.slice().reverse().map((point, index) => (
+                            <View key={index} style={styles.tableRow}>
+                                <Text style={styles.tableCell}>{point.date}</Text>
+                                <Text style={[styles.tableCell, { color: Colors.success }]}>
+                                    {point.income === 0 ? '-' : `+${point.income.toFixed(0)}`}
+                                </Text>
+                                <Text style={[styles.tableCell, { color: Colors.error }]}>
+                                    {point.expense === 0 ? '-' : `-${point.expense.toFixed(0)}`}
+                                </Text>
+                                <Text style={styles.tableCell}>
+                                    {point.balance === 0 ? '-' : point.balance.toFixed(0)}
+                                </Text>
+                            </View>
+                        ))}
+                    </View>
+                )}
             </>
+        );
+    };
+
+    const renderPointDetailModal = () => {
+        return (
+            <Modal
+                visible={!!selectedPoint}
+                transparent={true}
+                animationType="fade"
+                onRequestClose={() => setSelectedPoint(null)}
+            >
+                <Pressable 
+                    style={styles.modalOverlay} 
+                    onPress={() => setSelectedPoint(null)}
+                >
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>{selectedPoint?.date}</Text>
+                        <View style={styles.modalRow}>
+                            <Text style={styles.modalLabel}>收入</Text>
+                            <Text style={[styles.modalValue, { color: Colors.success }]}>
+                                {selectedPoint?.income === 0 ? '-' : `+${formatCurrency(selectedPoint?.income || 0).replace('¥', '¥')}`}
+                            </Text>
+                        </View>
+                        <View style={styles.modalRow}>
+                            <Text style={styles.modalLabel}>支出</Text>
+                            <Text style={[styles.modalValue, { color: Colors.error }]}>
+                                {selectedPoint?.expense === 0 ? '-' : `-${formatCurrency(selectedPoint?.expense || 0).replace('¥', '¥')}`}
+                            </Text>
+                        </View>
+                        <View style={styles.modalRow}>
+                            <Text style={styles.modalLabel}>结余</Text>
+                            <Text style={styles.modalValue}>
+                                {formatCurrency(selectedPoint?.balance || 0)}
+                            </Text>
+                        </View>
+                    </View>
+                </Pressable>
+            </Modal>
         );
     };
 
@@ -443,9 +608,6 @@ export const ReportScreen: React.FC = () => {
                     
                     {/* 维度选择（仅多维分析） */}
                     {activeTab === 'dimension' && renderDimensionSelector()}
-                    
-                    {/* 图表类型（带分隔线） */}
-                    {renderChartTypeToggle()}
                 </View>
                 
                 {activeTab === 'category' 
@@ -455,6 +617,17 @@ export const ReportScreen: React.FC = () => {
                         : renderDimensionStatistics()
                 }
             </ScrollView>
+
+            {showDatePicker && (
+                <DateTimePicker
+                    value={selectedDate}
+                    mode="date"
+                    display="default"
+                    onChange={onDateChange}
+                />
+            )}
+            
+            {renderPointDetailModal()}
         </View>
     );
 };
@@ -471,6 +644,12 @@ const styles = StyleSheet.create({
         backgroundColor: Colors.surface,
         borderBottomWidth: 1,
         borderBottomColor: Colors.divider,
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+    },
+    headerLeft: {
+        flexShrink: 1,
     },
     headerTitle: {
         fontSize: FontSizes.xxl,
@@ -560,13 +739,12 @@ const styles = StyleSheet.create({
     // ===== 图表类型图标按钮 =====
     chartTypeIconRow: {
         flexDirection: 'row',
-        justifyContent: 'center',
         alignItems: 'center',
-        gap: Spacing.sm,
+        gap: Spacing.xs,
     },
     chartIconButton: {
-        width: 40,
-        height: 40,
+        width: 32,
+        height: 32,
         alignItems: 'center',
         justifyContent: 'center',
         borderRadius: BorderRadius.md,
@@ -607,5 +785,80 @@ const styles = StyleSheet.create({
         height: 1,
         backgroundColor: Colors.divider,
         marginVertical: Spacing.md,
+    },
+    // ===== 表格样式 =====
+    tableContainer: {
+        backgroundColor: Colors.surface,
+        borderRadius: BorderRadius.lg,
+        padding: Spacing.md,
+        marginTop: Spacing.md,
+        ...Shadows.sm,
+    },
+    tableTitle: {
+        fontSize: FontSizes.md,
+        fontWeight: FontWeights.bold,
+        color: Colors.text,
+        marginBottom: Spacing.md,
+    },
+    tableHeader: {
+        flexDirection: 'row',
+        borderBottomWidth: 1,
+        borderBottomColor: Colors.divider,
+        paddingBottom: Spacing.sm,
+        marginBottom: Spacing.sm,
+    },
+    tableHeaderCell: {
+        flex: 1,
+        fontSize: FontSizes.sm,
+        color: Colors.textSecondary,
+        textAlign: 'center',
+    },
+    tableRow: {
+        flexDirection: 'row',
+        paddingVertical: Spacing.sm,
+        borderBottomWidth: 1,
+        borderBottomColor: Colors.background,
+    },
+    tableCell: {
+        flex: 1,
+        fontSize: FontSizes.sm,
+        color: Colors.text,
+        textAlign: 'center',
+    },
+    // ===== 模态框样式 =====
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    modalContent: {
+        width: '80%',
+        backgroundColor: Colors.surface,
+        borderRadius: BorderRadius.lg,
+        padding: Spacing.lg,
+        ...Shadows.md,
+    },
+    modalTitle: {
+        fontSize: FontSizes.xl,
+        fontWeight: FontWeights.bold,
+        color: Colors.text,
+        marginBottom: Spacing.lg,
+        textAlign: 'center',
+    },
+    modalRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: Spacing.md,
+    },
+    modalLabel: {
+        fontSize: FontSizes.md,
+        color: Colors.textSecondary,
+    },
+    modalValue: {
+        fontSize: FontSizes.lg,
+        fontWeight: FontWeights.bold,
+        color: Colors.text,
     },
 });

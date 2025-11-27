@@ -35,10 +35,6 @@ export const CategoryPicker: React.FC<CategoryPickerProps> = ({
   currentCategory,
   title,
 }) => {
-  const quickCategories = React.useMemo(
-    () => categories.slice(0, Math.min(categories.length, 6)),
-    [categories]
-  );
 
   const renderCategoryItem = ({ item }: { item: Category }) => {
     const isActive = currentCategory?.id === item.id;
@@ -86,48 +82,6 @@ export const CategoryPicker: React.FC<CategoryPickerProps> = ({
             </TouchableOpacity>
           </View>
 
-          {quickCategories.length > 0 && (
-            <View style={styles.quickSection}>
-              <Text style={styles.sectionTitle}>常用分类</Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.quickChips}
-              >
-                {quickCategories.map(category => {
-                  const isActive = currentCategory?.id === category.id;
-                  return (
-                    <TouchableOpacity
-                      key={category.id}
-                      style={[
-                        styles.quickChip,
-                        isActive && styles.quickChipActive,
-                      ]}
-                      onPress={() => onSelect(category)}
-                      activeOpacity={0.8}
-                    >
-                      <View style={styles.quickChipContent}>
-                        <CategoryIcon 
-                          icon={category.icon} 
-                          size={16} 
-                          color={isActive ? Colors.primary : Colors.textSecondary}
-                        />
-                        <Text
-                          style={[
-                            styles.quickChipText,
-                            isActive && styles.quickChipTextActive,
-                          ]}
-                        >
-                          {category.name}
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            </View>
-          )}
-
           <FlatList
             data={categories}
             renderItem={renderCategoryItem}
@@ -161,47 +115,6 @@ const styles = StyleSheet.create({
     borderTopRightRadius: BorderRadius.xl,
     maxHeight: '60%',
     paddingBottom: Spacing.lg,
-  },
-  quickSection: {
-    paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.md,
-    paddingBottom: Spacing.sm,
-  },
-  sectionTitle: {
-    fontSize: FontSizes.sm,
-    color: Colors.textSecondary,
-    marginBottom: Spacing.sm,
-    fontWeight: FontWeights.medium,
-  },
-  quickChips: {
-    flexDirection: 'row',
-    paddingRight: Spacing.md,
-  },
-  quickChip: {
-    paddingVertical: Spacing.xs,
-    paddingHorizontal: Spacing.md,
-    borderRadius: BorderRadius.lg,
-    backgroundColor: Colors.background,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    marginRight: Spacing.sm,
-  },
-  quickChipContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  quickChipActive: {
-    backgroundColor: Colors.primary + '15',
-    borderColor: Colors.primary,
-  },
-  quickChipText: {
-    fontSize: FontSizes.sm,
-    color: Colors.textSecondary,
-    fontWeight: FontWeights.medium,
-  },
-  quickChipTextActive: {
-    color: Colors.primary,
   },
   header: {
     flexDirection: 'row',

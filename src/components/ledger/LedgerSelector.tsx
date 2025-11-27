@@ -37,6 +37,12 @@ interface LedgerSelectorProps {
     // 是否显示"全部账本"选项
     showAllOption?: boolean;
 
+    // 默认账本ID
+    defaultLedgerId?: number | null;
+
+    // 当前用户ID（用于判断是否是受邀加入的共享账本）
+    currentUserId?: number | null;
+
     // 自定义样式
     style?: any;
 
@@ -51,6 +57,8 @@ export const LedgerSelector: React.FC<LedgerSelectorProps> = ({
     onSelect,
     mode = 'dropdown',
     showAllOption = false,
+    defaultLedgerId,
+    currentUserId,
     style,
     disabled = false,
 }) => {
@@ -94,6 +102,10 @@ export const LedgerSelector: React.FC<LedgerSelectorProps> = ({
         const name = isAllOption ? '全部账本' : item.name;
         const typeName = isAllOption ? '' : item.typeName;
 
+        // 判断标记
+        const isDefault = !isAllOption && defaultLedgerId && item.id === defaultLedgerId;
+        const isSharedJoined = !isAllOption && currentUserId && item.type === LedgerType.SHARED && item.ownerUserId !== currentUserId;
+
         return (
             <TouchableOpacity
                 key={isAllOption ? 'all' : item.id}
@@ -117,14 +129,29 @@ export const LedgerSelector: React.FC<LedgerSelectorProps> = ({
 
                     {/* 中间信息 */}
                     <View style={styles.ledgerItemInfo}>
-                        <Text
-                            style={[
-                                styles.ledgerItemName,
-                                isActive && styles.ledgerItemNameActive,
-                            ]}
-                        >
-                            {name}
-                        </Text>
+                        <View style={styles.ledgerItemNameRow}>
+                            <Text
+                                style={[
+                                    styles.ledgerItemName,
+                                    isActive && styles.ledgerItemNameActive,
+                                ]}
+                                numberOfLines={1}
+                            >
+                                {name}
+                            </Text>
+                            
+                            {/* 标记徽章 */}
+                            {isDefault && (
+                                <View style={styles.badgeDefault}>
+                                    <Text style={styles.badgeDefaultText}>默认</Text>
+                                </View>
+                            )}
+                            {isSharedJoined && (
+                                <View style={styles.badgeShared}>
+                                    <Text style={styles.badgeSharedText}>受邀</Text>
+                                </View>
+                            )}
+                        </View>
                         {typeName && (
                             <Text style={styles.ledgerItemType}>{typeName}</Text>
                         )}
@@ -489,14 +516,48 @@ const styles = StyleSheet.create({
     ledgerItemInfo: {
         flex: 1,
     },
+    ledgerItemNameRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 2,
+        flexWrap: 'wrap',
+    },
     ledgerItemName: {
         fontSize: FontSizes.md,
         fontWeight: FontWeights.semibold,
         color: Colors.text,
-        marginBottom: 2,
+        marginRight: Spacing.xs,
     },
     ledgerItemNameActive: {
         color: Colors.primary,
+    },
+    badgeDefault: {
+        backgroundColor: Colors.accent.yellow + '15',
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+        borderRadius: 4,
+        marginRight: Spacing.xs,
+        borderWidth: 0.5,
+        borderColor: Colors.accent.yellow + '30',
+    },
+    badgeDefaultText: {
+        fontSize: 10,
+        color: Colors.accent.yellow,
+        fontWeight: FontWeights.medium,
+    },
+    badgeShared: {
+        backgroundColor: Colors.accent.purple + '15',
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+        borderRadius: 4,
+        marginRight: Spacing.xs,
+        borderWidth: 0.5,
+        borderColor: Colors.accent.purple + '30',
+    },
+    badgeSharedText: {
+        fontSize: 10,
+        color: Colors.accent.purple,
+        fontWeight: FontWeights.medium,
     },
     ledgerItemType: {
         fontSize: FontSizes.sm,

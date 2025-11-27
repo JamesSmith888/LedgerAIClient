@@ -10,6 +10,7 @@ import {
   StyleSheet,
   Modal,
   ScrollView,
+  Alert,
 } from 'react-native';
 import { Icon } from '../common';
 import { Colors, Spacing, FontSizes, FontWeights, BorderRadius, Shadows } from '../../constants/theme';
@@ -38,8 +39,10 @@ const STORAGE_OPTIONS: StorageOption[] = [
   {
     type: 'cloud',
     title: '云端存储',
-    description: '文件上传到服务器',
+    description: '文件上传到服务器（暂不可用）',
     icon: '☁️',
+    disabled: true, // 暂时禁用
+    disabledReason: '为降低测试服务器成本，云端存储功能暂时关闭。请使用本地存储，您的数据将安全保存在手机中。感谢理解！🙏',
     pros: [
       '多设备同步，随时随地访问',
       '换设备不会丢失',
@@ -76,24 +79,42 @@ export const StorageTypeSelector: React.FC<StorageTypeSelectorProps> = ({
       style={[
         styles.optionCard,
         isSelected && styles.optionCardSelected,
+        option.disabled && styles.optionCardDisabled,
       ]}
       onPress={() => {
+        if (option.disabled) {
+          // 显示禁用原因
+          Alert.alert(
+            '功能暂不可用',
+            option.disabledReason || '该功能暂时不可用',
+            [{ text: '知道了', style: 'default' }]
+          );
+          return;
+        }
         onTypeChange(option.type);
         if (!showCompactMode) {
           setShowModal(false);
         }
       }}
-      activeOpacity={0.7}
+      activeOpacity={option.disabled ? 1 : 0.7}
+      disabled={option.disabled && isSelected} // 已选中且禁用时完全禁用
     >
       <View style={styles.optionHeader}>
-        <Text style={styles.optionIcon}>{option.icon}</Text>
+        <Text style={[styles.optionIcon, option.disabled && styles.optionIconDisabled]}>{option.icon}</Text>
         <View style={styles.optionHeaderText}>
-          <Text style={[styles.optionTitle, isSelected && styles.optionTitleSelected]}>
-            {option.title}
-          </Text>
-          <Text style={styles.optionDescription}>{option.description}</Text>
+          <View style={styles.optionTitleRow}>
+            <Text style={[styles.optionTitle, isSelected && styles.optionTitleSelected, option.disabled && styles.optionTitleDisabled]}>
+              {option.title}
+            </Text>
+            {option.disabled && (
+              <View style={styles.disabledBadge}>
+                <Text style={styles.disabledBadgeText}>暂不可用</Text>
+              </View>
+            )}
+          </View>
+          <Text style={[styles.optionDescription, option.disabled && styles.optionDescriptionDisabled]}>{option.description}</Text>
         </View>
-        {isSelected && (
+        {isSelected && !option.disabled && (
           <View style={styles.selectedBadge}>
             <Icon name="checkmark-circle" size={24} color={Colors.primary} />
           </View>
@@ -129,20 +150,36 @@ export const StorageTypeSelector: React.FC<StorageTypeSelectorProps> = ({
               style={[
                 styles.compactOption,
                 selectedType === option.type && styles.compactOptionSelected,
+                option.disabled && styles.compactOptionDisabled,
               ]}
-              onPress={() => onTypeChange(option.type)}
+              onPress={() => {
+                if (option.disabled) {
+                  Alert.alert(
+                    '功能暂不可用',
+                    option.disabledReason || '该功能暂时不可用',
+                    [{ text: '知道了', style: 'default' }]
+                  );
+                  return;
+                }
+                onTypeChange(option.type);
+              }}
+              disabled={option.disabled && selectedType === option.type}
             >
-              <Text style={styles.compactOptionIcon}>{option.icon}</Text>
+              <Text style={[styles.compactOptionIcon, option.disabled && styles.compactOptionIconDisabled]}>{option.icon}</Text>
               <Text
                 style={[
                   styles.compactOptionText,
                   selectedType === option.type && styles.compactOptionTextSelected,
+                  option.disabled && styles.compactOptionTextDisabled,
                 ]}
               >
                 {option.title}
               </Text>
-              {selectedType === option.type && (
+              {selectedType === option.type && !option.disabled && (
                 <Icon name="checkmark" size={16} color={Colors.primary} />
+              )}
+              {option.disabled && (
+                <Icon name="ban" size={14} color={Colors.textLight} />
               )}
             </TouchableOpacity>
           ))}
@@ -331,6 +368,45 @@ const styles = StyleSheet.create({
   },
   selectedBadge: {
     marginLeft: Spacing.sm,
+  },
+  optionTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+  },
+  disabledBadge: {
+    backgroundColor: Colors.textLight,
+    paddingHorizontal: Spacing.xs,
+    paddingVertical: 2,
+    borderRadius: BorderRadius.sm,
+  },
+  disabledBadgeText: {
+    fontSize: FontSizes.xs,
+    color: Colors.surface,
+    fontWeight: FontWeights.medium,
+  },
+  optionCardDisabled: {
+    opacity: 0.6,
+    backgroundColor: Colors.backgroundSecondary,
+  },
+  optionIconDisabled: {
+    opacity: 0.5,
+  },
+  optionTitleDisabled: {
+    color: Colors.textLight,
+  },
+  optionDescriptionDisabled: {
+    color: Colors.textLight,
+  },
+  compactOptionDisabled: {
+    opacity: 0.6,
+    backgroundColor: Colors.backgroundSecondary,
+  },
+  compactOptionIconDisabled: {
+    opacity: 0.5,
+  },
+  compactOptionTextDisabled: {
+    color: Colors.textLight,
   },
   optionDetails: {
     gap: Spacing.sm,

@@ -22,6 +22,7 @@ const convertToCategory = (response: CategoryResponse): Category => ({
     icon: response.icon,
     color: response.color,
     type: response.type,
+    isSystem: response.isSystem,
 });
 
 export const CategoryProvider: React.FC<{ children: ReactNode }> = ({ children }) => {

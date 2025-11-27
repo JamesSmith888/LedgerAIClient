@@ -1,6 +1,6 @@
 /**
- * 帮助与反馈页面
- * 用户可以查看自己提交的反馈记录，并提交新的反馈
+ * 帮助与反馈页面（GitHub Issues风格）
+ * 用户可以查看所有用户提交的反馈，搜索、筛选、查看详情、评论等
  */
 import React, { useState, useCallback } from 'react';
 import {
@@ -11,6 +11,7 @@ import {
   ScrollView,
   ActivityIndicator,
   RefreshControl,
+  TextInput,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -18,6 +19,7 @@ import { Colors, Spacing, FontSizes, BorderRadius, Shadows, FontWeights } from '
 import { toast, showConfirm } from '../utils/toast';
 import { feedbackAPI, Feedback } from '../api/services/feedbackAPI';
 import { Icon, FeatherIcons, AppIcons } from '../components/common';
+import { useAuth } from '../context/AuthContext';
 
 // 反馈类型的颜色配置
 const TYPE_COLORS = {
@@ -34,20 +36,36 @@ const STATUS_COLORS = {
   '已关闭': Colors.textLight,
 };
 
+// 视图模式
+type ViewMode = 'all' | 'mine';
+
 export const FeedbackScreen: React.FC = () => {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
 
   const [feedbacks, setFeedbacks] = useState<Feedback[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedType, setSelectedType] = useState<'全部' | '需求' | '优化' | 'BUG'>('全部');
+  const [selectedStatus, setSelectedStatus] = useState<'全部' | '待处理' | '处理中' | '已完成' | '已关闭'>('全部');
+  const [viewMode, setViewMode] = useState<ViewMode>('all');
+  const [searchKeyword, setSearchKeyword] = useState('');
 
   // 加载反馈列表
   const loadFeedbacks = async (showLoading = true) => {
     try {
       if (showLoading) setIsLoading(true);
-      const data = await feedbackAPI.getAll();
+      
+      let data: Feedback[];
+      
+      // 根据视图模式加载不同的数据
+      if (viewMode === 'mine') {
+        data = await feedbackAPI.getAll(); // 我的反馈
+      } else {
+        data = await feedbackAPI.getAllPublic(); // 所有公开反馈
+      }
+      
       setFeedbacks(data);
     } catch (error) {
       console.error('加载反馈失败:', error);
@@ -58,11 +76,30 @@ export const FeedbackScreen: React.FC = () => {
     }
   };
 
+  // 搜索反馈
+  const handleSearch = async () => {
+    if (!searchKeyword.trim()) {
+      loadFeedbacks();
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      const data = await feedbackAPI.search(searchKeyword.trim());
+      setFeedbacks(data);
+    } catch (error) {
+      console.error('搜索失败:', error);
+      toast.error('搜索失败');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // 页面聚焦时刷新数据
   useFocusEffect(
     useCallback(() => {
       loadFeedbacks();
-    }, [])
+    }, [viewMode])
   );
 
   // 下拉刷新
@@ -92,17 +129,98 @@ export const FeedbackScreen: React.FC = () => {
     );
   };
 
+  // 处理点赞/倒赞反馈
+  const handleReactFeedback = async (feedback: Feedback, reactionType: 'upvote' | 'downvote') => {
+    try {
+      if (feedback.userReaction === reactionType) {
+        // 取消反应
+        await feedbackAPI.removeFeedbackReaction(feedback.id);
+      } else if (reactionType === 'upvote') {
+        await feedbackAPI.upvoteFeedback(feedback.id);
+      } else {
+        await feedbackAPI.downvoteFeedback(feedback.id);
+      }
+      
+      // 更新本地状态
+      const updatedFeedbacks = feedbacks.map(f => {
+        if (f.id === feedback.id) {
+          let updatedFeedback = { ...f };
+          
+          // 如果取消反应
+          if (f.userReaction === reactionType) {
+            if (reactionType === 'upvote') {
+              updatedFeedback.upvoteCount = Math.max(0, (f.upvoteCount || 0) - 1);
+            } else {
+              updatedFeedback.downvoteCount = Math.max(0, (f.downvoteCount || 0) - 1);
+            }
+            updatedFeedback.userReaction = null;
+          } else {
+            // 更新新反应
+            if (f.userReaction === 'upvote') {
+              updatedFeedback.upvoteCount = Math.max(0, (f.upvoteCount || 0) - 1);
+            } else if (f.userReaction === 'downvote') {
+              updatedFeedback.downvoteCount = Math.max(0, (f.downvoteCount || 0) - 1);
+            }
+            
+            if (reactionType === 'upvote') {
+              updatedFeedback.upvoteCount = (f.upvoteCount || 0) + 1;
+            } else {
+              updatedFeedback.downvoteCount = (f.downvoteCount || 0) + 1;
+            }
+            updatedFeedback.userReaction = reactionType;
+          }
+          
+          return updatedFeedback;
+        }
+        return f;
+      });
+      
+      setFeedbacks(updatedFeedbacks);
+    } catch (error) {
+      console.error('反应失败:', error);
+      toast.error('操作失败，请重试');
+    }
+  };
+
   // 过滤反馈列表
-  const filteredFeedbacks = selectedType === '全部' 
-    ? feedbacks 
-    : feedbacks.filter(f => f.type === selectedType);
+  const filteredFeedbacks = feedbacks.filter(f => {
+    // 类型筛选
+    if (selectedType !== '全部' && f.type !== selectedType) return false;
+    // 状态筛选
+    if (selectedStatus !== '全部' && f.status !== selectedStatus) return false;
+    return true;
+  });
 
   // 统计数量
-  const counts = {
+  const typeCounts = {
     '全部': feedbacks.length,
     '需求': feedbacks.filter(f => f.type === '需求').length,
     '优化': feedbacks.filter(f => f.type === '优化').length,
     'BUG': feedbacks.filter(f => f.type === 'BUG').length,
+  };
+
+  const statusCounts = {
+    '全部': feedbacks.length,
+    '待处理': feedbacks.filter(f => f.status === '待处理').length,
+    '处理中': feedbacks.filter(f => f.status === '处理中').length,
+    '已完成': feedbacks.filter(f => f.status === '已完成').length,
+    '已关闭': feedbacks.filter(f => f.status === '已关闭').length,
+  };
+
+  // 获取显示的用户名（优先显示昵称）
+  const getDisplayName = (feedback: Feedback): string => {
+    if (feedback.userNickname && feedback.userNickname.trim()) {
+      return feedback.userNickname;
+    }
+    if (feedback.userName && feedback.userName.trim()) {
+      return feedback.userName;
+    }
+    return `用户${feedback.userId}`;
+  };
+
+  // 跳转到反馈详情
+  const navigateToDetail = (feedback: Feedback) => {
+    (navigation as any).navigate('FeedbackDetail', { feedbackId: feedback.id });
   };
 
   return (
@@ -121,8 +239,94 @@ export const FeedbackScreen: React.FC = () => {
         </TouchableOpacity>
       </View>
 
+      {/* 搜索栏 */}
+      <View style={styles.searchContainer}>
+        <View style={styles.searchInputContainer}>
+          <Icon
+            type="feather"
+            name={FeatherIcons.search}
+            size={18}
+            color={Colors.textLight}
+          />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="搜索反馈标题或描述..."
+            placeholderTextColor={Colors.textLight}
+            value={searchKeyword}
+            onChangeText={setSearchKeyword}
+            onSubmitEditing={handleSearch}
+            returnKeyType="search"
+          />
+          {searchKeyword.length > 0 && (
+            <TouchableOpacity
+              onPress={() => {
+                setSearchKeyword('');
+                loadFeedbacks();
+              }}
+            >
+              <Icon
+                type="ionicons"
+                name={AppIcons.closeCircle}
+                size={18}
+                color={Colors.textLight}
+              />
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+
+      {/* 视图模式切换 */}
+      <View style={styles.viewModeContainer}>
+        <TouchableOpacity
+          style={[
+            styles.viewModeButton,
+            viewMode === 'all' && styles.viewModeButtonActive,
+          ]}
+          onPress={() => setViewMode('all')}
+        >
+          <Icon
+            type="ionicons"
+            name={AppIcons.peopleOutline}
+            size={18}
+            color={viewMode === 'all' ? Colors.surface : Colors.textSecondary}
+          />
+          <Text
+            style={[
+              styles.viewModeButtonText,
+              viewMode === 'all' && styles.viewModeButtonTextActive,
+            ]}
+          >
+            全部反馈
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[
+            styles.viewModeButton,
+            viewMode === 'mine' && styles.viewModeButtonActive,
+          ]}
+          onPress={() => setViewMode('mine')}
+        >
+          <Icon
+            type="ionicons"
+            name={AppIcons.personOutline}
+            size={18}
+            color={viewMode === 'mine' ? Colors.surface : Colors.textSecondary}
+          />
+          <Text
+            style={[
+              styles.viewModeButtonText,
+              viewMode === 'mine' && styles.viewModeButtonTextActive,
+            ]}
+          >
+            我的反馈
+          </Text>
+        </TouchableOpacity>
+      </View>
+
       {/* 类型筛选 */}
       <View style={styles.filterContainer}>
+        <Text style={styles.filterLabel}>类型</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           {(['全部', '需求', '优化', 'BUG'] as const).map(type => (
             <TouchableOpacity
@@ -139,7 +343,33 @@ export const FeedbackScreen: React.FC = () => {
                   selectedType === type && styles.filterButtonTextActive,
                 ]}
               >
-                {type} ({counts[type]})
+                {type} ({typeCounts[type]})
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+
+      {/* 状态筛选 */}
+      <View style={styles.filterContainer}>
+        <Text style={styles.filterLabel}>状态</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          {(['全部', '待处理', '处理中', '已完成', '已关闭'] as const).map(status => (
+            <TouchableOpacity
+              key={status}
+              style={[
+                styles.filterButton,
+                selectedStatus === status && styles.filterButtonActive,
+              ]}
+              onPress={() => setSelectedStatus(status)}
+            >
+              <Text
+                style={[
+                  styles.filterButtonText,
+                  selectedStatus === status && styles.filterButtonTextActive,
+                ]}
+              >
+                {status} ({statusCounts[status]})
               </Text>
             </TouchableOpacity>
           ))}
@@ -179,89 +409,178 @@ export const FeedbackScreen: React.FC = () => {
           <View style={styles.listContainer}>
             {filteredFeedbacks.map(feedback => (
               <View key={feedback.id} style={styles.feedbackCard}>
-                {/* 头部 */}
-                <View style={styles.feedbackHeader}>
-                  <View style={styles.feedbackHeaderLeft}>
-                    <View
-                      style={[
-                        styles.typeBadge,
-                        { backgroundColor: TYPE_COLORS[feedback.type] + '15' },
-                      ]}
-                    >
-                      <Text
+                <TouchableOpacity
+                  style={styles.feedbackCardTouchable}
+                  onPress={() => navigateToDetail(feedback)}
+                  activeOpacity={0.7}
+                >
+                  {/* 头部 */}
+                  <View style={styles.feedbackHeader}>
+                    <View style={styles.feedbackHeaderLeft}>
+                      <View
                         style={[
-                          styles.typeBadgeText,
-                          { color: TYPE_COLORS[feedback.type] },
+                          styles.typeBadge,
+                          { backgroundColor: TYPE_COLORS[feedback.type] + '15' },
                         ]}
                       >
-                        {feedback.type}
-                      </Text>
+                        <Text
+                          style={[
+                            styles.typeBadgeText,
+                            { color: TYPE_COLORS[feedback.type] },
+                          ]}
+                        >
+                          {feedback.type}
+                        </Text>
+                      </View>
+                      {/* 当状态筛选为"全部"时，显示状态标签 */}
+                      {selectedStatus === '全部' && (
+                        <View
+                          style={[
+                            styles.statusBadge,
+                            { backgroundColor: STATUS_COLORS[feedback.status] + '15' },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.statusBadgeText,
+                              { color: STATUS_COLORS[feedback.status] },
+                            ]}
+                          >
+                            {feedback.status}
+                          </Text>
+                        </View>
+                      )}
                     </View>
-                    <View
-                      style={[
-                        styles.statusBadge,
-                        { backgroundColor: STATUS_COLORS[feedback.status] + '15' },
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.statusBadgeText,
-                          { color: STATUS_COLORS[feedback.status] },
-                        ]}
+                    {/* 只在有删除权限时显示删除按钮 */}
+                    {feedback.canDelete && (
+                      <TouchableOpacity
+                        onPress={() => handleDelete(feedback)}
+                        style={styles.deleteButton}
                       >
-                        {feedback.status}
-                      </Text>
-                    </View>
+                        <Icon
+                          type="feather"
+                          name={FeatherIcons.trash2}
+                          size={18}
+                          color={Colors.error}
+                        />
+                      </TouchableOpacity>
+                    )}
                   </View>
+
+                  {/* 标题 */}
+                  <Text style={styles.feedbackTitle}>{feedback.title}</Text>
+
+                  {/* 描述 */}
+                  {feedback.description && (
+                    <Text style={styles.feedbackDescription} numberOfLines={2}>
+                      {feedback.description}
+                    </Text>
+                  )}
+
+                  {/* 创建者和评论数 */}
+                  <View style={styles.feedbackMeta}>
+                    <View style={styles.feedbackMetaItem}>
+                      <Icon
+                        type="ionicons"
+                        name={AppIcons.personOutline}
+                        size={14}
+                        color={Colors.textLight}
+                      />
+                      <Text style={styles.feedbackMetaText}>
+                        {getDisplayName(feedback)}
+                      </Text>
+                    </View>
+                    {feedback.commentCount != null && feedback.commentCount > 0 && (
+                      <View style={styles.feedbackMetaItem}>
+                        <Icon
+                          type="feather"
+                          name={FeatherIcons.messageSquare}
+                          size={14}
+                          color={Colors.textLight}
+                        />
+                        <Text style={styles.feedbackMetaText}>
+                          {feedback.commentCount}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+
+                  {/* 管理员回复 */}
+                  {feedback.adminReply && (
+                    <View style={styles.replyContainer}>
+                      <View style={styles.replyHeader}>
+                        <Icon
+                          type="feather"
+                          name={FeatherIcons.mail}
+                          size={14}
+                          color={Colors.primary}
+                        />
+                        <Text style={styles.replyLabel}>管理员回复</Text>
+                      </View>
+                      <Text style={styles.replyText}>{feedback.adminReply}</Text>
+                    </View>
+                  )}
+
+                  {/* 时间 */}
+                  <View style={styles.feedbackFooter}>
+                    <Text style={styles.feedbackTime}>
+                      提交于 {new Date(feedback.createTime).toLocaleDateString('zh-CN')}
+                    </Text>
+                    {feedback.updateTime !== feedback.createTime && (
+                      <Text style={styles.feedbackTime}>
+                        更新于 {new Date(feedback.updateTime).toLocaleDateString('zh-CN')}
+                      </Text>
+                    )}
+                  </View>
+                </TouchableOpacity>
+
+                {/* 点赞/倒赞栏 */}
+                <View style={styles.reactionBar}>
                   <TouchableOpacity
-                    onPress={() => handleDelete(feedback)}
-                    style={styles.deleteButton}
+                    style={[
+                      styles.reactionButton,
+                      feedback.userReaction === 'upvote' && styles.reactionButtonActive,
+                    ]}
+                    onPress={() => handleReactFeedback(feedback, 'upvote')}
                   >
                     <Icon
                       type="feather"
-                      name={FeatherIcons.trash2}
-                      size={18}
-                      color={Colors.error}
+                      name={FeatherIcons.thumbsUp}
+                      size={16}
+                      color={feedback.userReaction === 'upvote' ? Colors.primary : Colors.textLight}
                     />
-                  </TouchableOpacity>
-                </View>
-
-                {/* 标题 */}
-                <Text style={styles.feedbackTitle}>{feedback.title}</Text>
-
-                {/* 描述 */}
-                {feedback.description && (
-                  <Text style={styles.feedbackDescription} numberOfLines={3}>
-                    {feedback.description}
-                  </Text>
-                )}
-
-                {/* 管理员回复 */}
-                {feedback.adminReply && (
-                  <View style={styles.replyContainer}>
-                    <View style={styles.replyHeader}>
-                      <Icon
-                        type="feather"
-                        name={FeatherIcons.mail}
-                        size={14}
-                        color={Colors.primary}
-                      />
-                      <Text style={styles.replyLabel}>管理员回复</Text>
-                    </View>
-                    <Text style={styles.replyText}>{feedback.adminReply}</Text>
-                  </View>
-                )}
-
-                {/* 时间 */}
-                <View style={styles.feedbackFooter}>
-                  <Text style={styles.feedbackTime}>
-                    提交于 {new Date(feedback.createTime).toLocaleDateString('zh-CN')}
-                  </Text>
-                  {feedback.updateTime !== feedback.createTime && (
-                    <Text style={styles.feedbackTime}>
-                      更新于 {new Date(feedback.updateTime).toLocaleDateString('zh-CN')}
+                    <Text
+                      style={[
+                        styles.reactionButtonText,
+                        feedback.userReaction === 'upvote' && styles.reactionButtonTextActive,
+                      ]}
+                    >
+                      {feedback.upvoteCount || 0}
                     </Text>
-                  )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.reactionButton,
+                      feedback.userReaction === 'downvote' && styles.reactionButtonActive,
+                    ]}
+                    onPress={() => handleReactFeedback(feedback, 'downvote')}
+                  >
+                    <Icon
+                      type="feather"
+                      name={FeatherIcons.thumbsDown}
+                      size={16}
+                      color={feedback.userReaction === 'downvote' ? Colors.error : Colors.textLight}
+                    />
+                    <Text
+                      style={[
+                        styles.reactionButtonText,
+                        feedback.userReaction === 'downvote' && styles.reactionButtonTextDownvote,
+                      ]}
+                    >
+                      {feedback.downvoteCount || 0}
+                    </Text>
+                  </TouchableOpacity>
                 </View>
               </View>
             ))}
@@ -286,6 +605,59 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surface,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
+  },
+  searchContainer: {
+    backgroundColor: Colors.surface,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  searchInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.background,
+    borderRadius: BorderRadius.lg,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.xs,
+    gap: Spacing.xs,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: FontSizes.md,
+    color: Colors.text,
+    paddingVertical: Spacing.xs,
+  },
+  viewModeContainer: {
+    flexDirection: 'row',
+    backgroundColor: Colors.surface,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    gap: Spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  viewModeButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.background,
+    gap: Spacing.xs,
+  },
+  viewModeButtonActive: {
+    backgroundColor: Colors.primary,
+  },
+  viewModeButtonText: {
+    fontSize: FontSizes.sm,
+    color: Colors.textSecondary,
+    fontWeight: FontWeights.medium,
+  },
+  viewModeButtonTextActive: {
+    color: Colors.surface,
+    fontWeight: FontWeights.semibold,
   },
   backButton: {
     width: 40,
@@ -317,6 +689,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.md,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
+  },
+  filterLabel: {
+    fontSize: FontSizes.xs,
+    color: Colors.textSecondary,
+    fontWeight: FontWeights.semibold,
+    marginBottom: Spacing.xs,
+    textTransform: 'uppercase',
   },
   filterButton: {
     paddingHorizontal: Spacing.md,
@@ -368,9 +747,12 @@ const styles = StyleSheet.create({
   feedbackCard: {
     backgroundColor: Colors.surface,
     borderRadius: BorderRadius.lg,
-    padding: Spacing.md,
+    padding: 0,
     marginBottom: Spacing.md,
     ...Shadows.sm,
+  },
+  feedbackCardTouchable: {
+    padding: Spacing.md,
   },
   feedbackHeader: {
     flexDirection: 'row',
@@ -447,5 +829,55 @@ const styles = StyleSheet.create({
   feedbackTime: {
     fontSize: FontSizes.xs,
     color: Colors.textLight,
+  },
+  feedbackMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: Spacing.sm,
+    gap: Spacing.md,
+  },
+  feedbackMetaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  feedbackMetaText: {
+    fontSize: FontSizes.xs,
+    color: Colors.textLight,
+  },
+  reactionBar: {
+    flexDirection: 'row',
+    justifyContent: 'flex-start',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    gap: Spacing.lg,
+  },
+  reactionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.xs,
+    gap: Spacing.xs,
+    borderRadius: BorderRadius.sm,
+    backgroundColor: Colors.background,
+  },
+  reactionButtonActive: {
+    backgroundColor: Colors.primary + '15',
+  },
+  reactionButtonText: {
+    fontSize: FontSizes.sm,
+    color: Colors.textLight,
+    fontWeight: FontWeights.medium,
+  },
+  reactionButtonTextActive: {
+    color: Colors.primary,
+    fontWeight: FontWeights.semibold,
+  },
+  reactionButtonTextDownvote: {
+    color: Colors.error,
+    fontWeight: FontWeights.semibold,
   },
 });

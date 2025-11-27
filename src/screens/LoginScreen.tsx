@@ -80,8 +80,12 @@ export const LoginScreen: React.FC<{ navigation: any }> = ({ navigation }) => {
         email: response.email,
         avatarUrl: response.avatarUrl,
         avatar: response.avatarUrl,
+        role: response.role, // 添加用户角色
         createdAt: response.createdAt,
       };
+
+      console.log('🔍 [LoginScreen] 构建的用户对象:', user);
+      console.log('🔍 [LoginScreen] 用户角色:', user.role);
 
       // 保存登录状态
       const token = response.token || 'temp-token'; // 如果没有token，使用临时值

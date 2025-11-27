@@ -23,6 +23,7 @@ export interface TransactionQueryParams {
     size?: number;
     sortBy?: 'transactionDateTime' | 'amount' | 'createTime';
     sortDirection?: 'ASC' | 'DESC';
+    keyword?: string | null; // 搜索关键词（模糊匹配名称和描述）
 }
 
 export interface TransactionPageResponse {
@@ -37,18 +38,32 @@ export interface TransactionPageResponse {
     hasPrevious: boolean;
 }
 
+export interface DailyStatisticsResponse {
+    date: string;
+    income: number;
+    expense: number;
+    count: number;
+}
+
+export interface MonthlySummaryResponse {
+    totalIncome: number;
+    totalExpense: number;
+    balance: number;
+    totalCount: number;
+}
+
 export const transactionAPI = {
 
-    create: async (transaction: Omit<Transaction, 'id'>): Promise<{ id: number }> => {
+    create: async (transaction: Omit<Transaction, 'id'>): Promise<Transaction> => {
         // 发送POST请求
-        const response = await apiClient.post<number>(
+        const response = await apiClient.post<TransactionResponse>(
             '/api/transactions/create',
             transaction,
         );
-        console.log('/api/transactions/create响应数据:', response);
+        console.log('/api/transactions/create响应数据:', response.data);
 
-        // 后端返回的是交易ID（在data字段中），包装成对象
-        return { id: response.data };
+        // 返回数据
+        return response.data;
     },
 
     /**
@@ -64,7 +79,8 @@ export const transactionAPI = {
             page = 0,
             size = 20,
             sortBy = 'transactionDateTime',
-            sortDirection = 'DESC'
+            sortDirection = 'DESC',
+            keyword
         } = params;
 
         const response = await apiClient.post<TransactionPageResponse>(
@@ -78,7 +94,8 @@ export const transactionAPI = {
                 page,
                 size,
                 sortBy,
-                sortDirection
+                sortDirection,
+                keyword
             }
         );
         console.log('/api/transactions/query响应数据:', response.data);
@@ -127,6 +144,50 @@ export const transactionAPI = {
             transaction
         );
         console.log('/api/transactions/{id} 更新响应:', response.data);
+        return response.data;
+    },
+
+    /**
+     * 获取每日统计数据（用于热力图）
+     */
+    getDailyStatistics: async (
+        ledgerId: number | null,
+        startTime: string,
+        endTime: string
+    ): Promise<DailyStatisticsResponse[]> => {
+        const params = new URLSearchParams();
+        if (ledgerId) {
+            params.append('ledgerId', ledgerId.toString());
+        }
+        params.append('startTime', startTime);
+        params.append('endTime', endTime);
+
+        const response = await apiClient.get<DailyStatisticsResponse[]>(
+            `/api/transactions/daily-statistics?${params.toString()}`
+        );
+        console.log('/api/transactions/daily-statistics响应数据:', response.data);
+        return response.data;
+    },
+
+    /**
+     * 获取月度汇总统计（用于列表页顶部汇总区域）
+     */
+    getMonthlySummary: async (
+        ledgerId: number | null,
+        startTime: string,
+        endTime: string
+    ): Promise<MonthlySummaryResponse> => {
+        const params = new URLSearchParams();
+        if (ledgerId) {
+            params.append('ledgerId', ledgerId.toString());
+        }
+        params.append('startTime', startTime);
+        params.append('endTime', endTime);
+
+        const response = await apiClient.get<MonthlySummaryResponse>(
+            `/api/transactions/monthly-summary?${params.toString()}`
+        );
+        console.log('/api/transactions/monthly-summary响应数据:', response.data);
         return response.data;
     },
 };
