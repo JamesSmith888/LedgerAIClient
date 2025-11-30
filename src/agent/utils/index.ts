@@ -8,3 +8,4 @@ export * from './contextManager';
 export * from './logger';
 export * from './cancellation';
 export * from './permissions';
+export * from './promptReflector';
