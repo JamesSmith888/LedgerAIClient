@@ -30,7 +30,6 @@ import {
   createConfirmationRequest,
   recordToolCall,
   ConfirmationRequest,
-  ToolPermission,
 } from "./utils/permissions";
 import {
   AgentStateMachine,
@@ -39,9 +38,13 @@ import {
   PlanStep,
 } from "./stateMachine";
 import {
-  ExecutionPlanGenerator,
   createPlanGenerator,
 } from "./planner";
+import {
+  PromptReflectorConfig,
+  ReflectionResult,
+  createPromptReflector,
+} from "./utils/promptReflector";
 
 // ============ 类型定义 ============
 
@@ -58,6 +61,10 @@ export interface StatefulAgentOptions {
   enablePlanning?: boolean;
   /** 是否启用人机确认（危险操作确认弹窗） */
   enableConfirmation?: boolean;
+  /** 是否启用提示词反思优化 */
+  enablePromptReflection?: boolean;
+  /** 提示词反思配置 */
+  promptReflectionConfig?: Partial<PromptReflectorConfig>;
   /** 用户偏好设置 */
   userPreferences?: {
     confirmHighRisk?: boolean;
@@ -84,16 +91,19 @@ export interface StatefulAgentCallbacks {
   onPlanGenerated?: (plan: ExecutionPlan) => void;
   /** 确认请求回调 */
   onConfirmationRequired?: (request: ConfirmationRequest) => void;
+  /** 提示词反思完成回调 */
+  onPromptReflected?: (result: ReflectionResult) => void;
 }
 
 export interface AgentStepEvent {
-  type: 'thinking' | 'planning' | 'tool_call' | 'tool_result' | 'confirmation' | 'cancelled' | 'state_change';
+  type: 'thinking' | 'planning' | 'tool_call' | 'tool_result' | 'confirmation' | 'cancelled' | 'state_change' | 'prompt_reflection';
   content: string;
   toolName?: string;
   toolArgs?: Record<string, any>;  // 工具调用参数
   plan?: ExecutionPlan;
   confirmationRequest?: ConfirmationRequest;
   state?: AgentState;
+  reflectionResult?: ReflectionResult;  // 提示词反思结果
 }
 
 // ============ 合并工具 ============
@@ -259,6 +269,8 @@ export function createStatefulAgent(apiKey: string, options?: StatefulAgentOptio
     logLevel,
     enablePlanning = true,
     enableConfirmation = true,
+    enablePromptReflection = true,
+    promptReflectionConfig,
     userPreferences,
   } = options || {};
 
@@ -275,6 +287,11 @@ export function createStatefulAgent(apiKey: string, options?: StatefulAgentOptio
     confirmMediumRisk: userPreferences.confirmMediumRisk ?? false,
     batchThreshold: userPreferences.batchThreshold ?? 5,
   } : undefined);
+  
+  // 初始化提示词反思器
+  const promptReflector = enablePromptReflection 
+    ? createPromptReflector(apiKey, promptReflectionConfig, runtimeContext)
+    : null;
   
   // System Prompt
   const systemPrompt = buildSystemPrompt(runtimeContext);
@@ -316,6 +333,7 @@ export function createStatefulAgent(apiKey: string, options?: StatefulAgentOptio
   console.log('🤖 [StatefulAgent] Initialized with:');
   console.log(`  - Planning mode: ${enablePlanning ? 'ENABLED' : 'DISABLED'}`);
   console.log(`  - Confirmation mode: ${enableConfirmation ? 'ENABLED' : 'DISABLED'}`);
+  console.log(`  - Prompt Reflection: ${enablePromptReflection ? 'ENABLED' : 'DISABLED'}`);
   console.log(`  - Tools: ${tools.length}`);
 
   /**
@@ -500,9 +518,66 @@ export function createStatefulAgent(apiKey: string, options?: StatefulAgentOptio
       const lastUserMessage = [...currentMessages]
         .reverse()
         .find(m => m instanceof HumanMessage);
-      const userInput = lastUserMessage 
+      let userInput = lastUserMessage 
         ? extractTextContent(lastUserMessage.content)
         : '';
+
+      // 提示词反思优化（在 Planning 之前执行）
+      let reflectionResult: ReflectionResult | null = null;
+      if (enablePromptReflection && promptReflector && userInput) {
+        try {
+          callbacks?.onStep?.({ 
+            type: 'prompt_reflection', 
+            content: '🔍 分析提示词...', 
+            state: AgentState.PARSING 
+          });
+          
+          reflectionResult = await promptReflector.reflect(userInput);
+          
+          if (reflectionResult.wasRefined) {
+            console.log('✨ [StatefulAgent] Prompt refined:');
+            console.log(`  - Original: ${reflectionResult.originalPrompt}`);
+            console.log(`  - Refined: ${reflectionResult.refinedPrompt}`);
+            console.log(`  - Intent: ${reflectionResult.intent}`);
+            console.log(`  - Confidence: ${reflectionResult.confidence}`);
+            
+            // 更新用户输入为优化后的版本
+            userInput = reflectionResult.refinedPrompt;
+            
+            // 如果优化后的提示词与原始不同，更新消息
+            if (reflectionResult.refinedPrompt !== reflectionResult.originalPrompt) {
+              // 找到最后一条用户消息并更新其内容
+              const lastUserMsgIndex = currentMessages.findIndex(
+                (m, i, arr) => m instanceof HumanMessage && 
+                  arr.slice(i + 1).every(n => !(n instanceof HumanMessage))
+              );
+              if (lastUserMsgIndex >= 0) {
+                currentMessages[lastUserMsgIndex] = new HumanMessage(reflectionResult.refinedPrompt);
+              }
+            }
+            
+            callbacks?.onStep?.({ 
+              type: 'prompt_reflection', 
+              content: `✨ 优化提示词: ${reflectionResult.refinedPrompt}`,
+              reflectionResult,
+            });
+            callbacks?.onPromptReflected?.(reflectionResult);
+          } else {
+            console.log('📝 [StatefulAgent] Prompt unchanged (already clear)');
+          }
+          
+          // 检查是否需要用户补充信息
+          const clarification = promptReflector.needsUserClarification(reflectionResult);
+          if (clarification.needed && clarification.questions.length > 0) {
+            console.log('❓ [StatefulAgent] Clarification needed:', clarification.questions);
+            // 可以通过回调通知 UI 显示澄清问题
+            // 但目前不中断流程，让 Agent 尝试处理
+          }
+        } catch (error) {
+          console.warn('⚠️ [StatefulAgent] Prompt reflection failed:', error);
+          // 反思失败不影响主流程
+        }
+      }
 
       // Planning 模式
       if (enablePlanning && userInput) {
@@ -850,6 +925,16 @@ export function createStatefulAgent(apiKey: string, options?: StatefulAgentOptio
      * 获取 Plan Generator
      */
     getPlanGenerator: () => planGenerator,
+
+    /**
+     * 获取 Prompt Reflector
+     */
+    getPromptReflector: () => promptReflector,
+
+    /**
+     * 是否启用提示词反思
+     */
+    isPromptReflectionEnabled: () => enablePromptReflection && promptReflector !== null,
   };
 }
 
@@ -863,4 +948,5 @@ export type {
   ExecutionPlan,
   PlanStep,
   ConfirmationRequest,
+  ReflectionResult,
 };

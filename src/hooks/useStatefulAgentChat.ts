@@ -5,6 +5,7 @@
  * 支持：
  * - Planning 模式（复杂任务分步规划）
  * - Human-in-the-Loop（危险操作确认弹窗）
+ * - 提示词反思优化（Prompt Reflection）
  * - 取消功能
  * - 状态可视化
  */
@@ -14,7 +15,6 @@ import { AgentMessage, AgentChatConfig, Attachment, PendingAttachment } from '..
 import {
   createStatefulAgent,
   StatefulAgent,
-  StatefulAgentOptions,
   StatefulAgentCallbacks,
   AgentStepEvent,
   AgentState,
@@ -22,6 +22,7 @@ import {
   ConfirmationRequest,
 } from '../agent/statefulAgent';
 import { CancellationReason } from '../agent/utils/cancellation';
+import { PromptReflectorConfig } from '../agent/utils/promptReflector';
 import { HumanMessage, AIMessage, BaseMessage } from "@langchain/core/messages";
 import type { MessageContentImageUrl, MessageContentText } from "@langchain/core/messages";
 import { ToolCallData } from '../components/agent/embedded';
@@ -41,6 +42,10 @@ interface StatefulAgentChatConfig extends AgentChatConfig {
   enablePlanning?: boolean;
   /** 是否启用人机确认 */
   enableConfirmation?: boolean;
+  /** 是否启用提示词反思优化 */
+  enablePromptReflection?: boolean;
+  /** 提示词反思配置 */
+  promptReflectionConfig?: Partial<PromptReflectorConfig>;
   /** 用户偏好 */
   userPreferences?: {
     confirmHighRisk?: boolean;
@@ -106,6 +111,8 @@ export const useStatefulAgentChat = (config: StatefulAgentChatConfig) => {
     enabledToolNames,
     enablePlanning = true,
     enableConfirmation = true,
+    enablePromptReflection = true,
+    promptReflectionConfig,
     userPreferences,
   } = config;
 
@@ -168,12 +175,15 @@ export const useStatefulAgentChat = (config: StatefulAgentChatConfig) => {
     console.log('🤖 [useStatefulAgentChat] Initializing stateful agent...');
     console.log(`  - Planning: ${enablePlanning ? 'ENABLED' : 'DISABLED'}`);
     console.log(`  - Confirmation: ${enableConfirmation ? 'ENABLED' : 'DISABLED'}`);
+    console.log(`  - Prompt Reflection: ${enablePromptReflection ? 'ENABLED' : 'DISABLED'}`);
 
     agentRef.current = createStatefulAgent(DEFAULT_API_KEY, {
       runtimeContext,
       enabledToolNames,
       enablePlanning,
       enableConfirmation,
+      enablePromptReflection,
+      promptReflectionConfig,
       userPreferences,
     });
     contextRef.current = runtimeContext;
@@ -210,7 +220,7 @@ export const useStatefulAgentChat = (config: StatefulAgentChatConfig) => {
       }
       agentRef.current = null;
     };
-  }, [runtimeContext, enablePlanning, enableConfirmation]);
+  }, [runtimeContext, enablePlanning, enableConfirmation, enablePromptReflection]);
 
   // ============ 发送消息 ============
 
