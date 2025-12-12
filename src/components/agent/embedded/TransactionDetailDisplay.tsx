@@ -9,10 +9,10 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Icon } from '../../common';
 import { CategoryIcon } from '../../common/CategoryIcon';
 import { Colors, Spacing, FontSizes, FontWeights, BorderRadius, Shadows } from '../../../constants/theme';
+import { TransactionIcons } from '../../../constants/icons';
 
 export interface TransactionDetailData {
   id: number;
-  name: string;
   description?: string;
   amount: number;
   type: 'INCOME' | 'EXPENSE';
@@ -97,7 +97,7 @@ export const TransactionDetailDisplay: React.FC<TransactionDetailDisplayProps> =
             />
           ) : (
             <Icon 
-              name={isExpense ? 'trending-down' : 'trending-up'} 
+              name={isExpense ? TransactionIcons.expense : TransactionIcons.income} 
               size={28} 
               color={isExpense ? Colors.expense : Colors.income} 
             />
@@ -106,7 +106,7 @@ export const TransactionDetailDisplay: React.FC<TransactionDetailDisplayProps> =
         
         <View style={styles.headerInfo}>
           <Text style={styles.transactionName} numberOfLines={1}>
-            {transaction.name || transaction.categoryName || '未命名交易'}
+            {transaction.description || transaction.categoryName || '未命名交易'}
           </Text>
           <Text style={[
             styles.amount,

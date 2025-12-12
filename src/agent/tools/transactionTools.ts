@@ -10,7 +10,6 @@ import { fetchWithTimeout, TIMEOUT_CONFIG } from "../utils";
  */
 export interface AgentTransaction {
   id: number;
-  name: string;
   description?: string;
   amount: number;
   type: 'INCOME' | 'EXPENSE';
@@ -51,8 +50,7 @@ export const createTransactionTool = new DynamicStructuredTool({
   name: "create_transaction",
   description: "【必须调用】创建一笔新的交易记录。这是唯一能实际完成记账的工具，用户说要记账时必须调用此工具。返回完整交易信息。",
   schema: z.object({
-    name: z.string().describe("交易名称或标题"),
-    description: z.string().optional().describe("交易描述"),
+    description: z.string().describe("交易描述/备注"),
     amount: z.number().describe("交易金额，必须大于0"),
     type: z.enum(["INCOME", "EXPENSE"]).describe("交易类型：'INCOME'代表收入，'EXPENSE'代表支出"),
     ledgerId: z.number().describe("账本ID"),
@@ -60,13 +58,12 @@ export const createTransactionTool = new DynamicStructuredTool({
     paymentMethodId: z.number().optional().describe("支付方式ID"),
     transactionDateTime: z.string().optional().describe("交易时间，ISO格式"),
   }),
-  func: async ({ name, description, amount, type, ledgerId, categoryId, paymentMethodId, transactionDateTime }) => {
-    console.log('🔧 [createTransactionTool] Called with:', { name, amount, type, ledgerId, categoryId });
+  func: async ({ description, amount, type, ledgerId, categoryId, paymentMethodId, transactionDateTime }) => {
+    console.log('🔧 [createTransactionTool] Called with:', { description, amount, type, ledgerId, categoryId });
     try {
       const headers = await getAuthHeaders();
 
       const requestBody = {
-        name,
         description,
         amount,
         type,
@@ -97,8 +94,7 @@ export const createTransactionTool = new DynamicStructuredTool({
           message: "交易创建成功",
           transaction: {
             id: tx.id,
-            name: tx.name,
-            description: tx.description ? tx.description : tx.name,
+            description: tx.description,
             amount: tx.amount,
             type: tx.type,
             typeName: tx.type === 'INCOME' ? '收入' : '支出',
@@ -172,7 +168,7 @@ export const queryTransactionsTool = new DynamicStructuredTool({
           return "未找到符合条件的交易记录。";
         }
         const list = data.data.content.map((t: any) =>
-          `ID:${t.id} | 名称:${t.name} | 金额:${t.amount} | 类型:${t.type} | 时间:${t.transactionDateTime}`
+          `ID:${t.id} | 描述:${t.description || '无'} | 金额:${t.amount} | 类型:${t.type} | 时间:${t.transactionDateTime}`
         ).join('\n');
         console.log(`✅ [queryTransactionsTool] Found ${data.data.totalElements} transactions`);
         return `📊 查询结果 (共${data.data.totalElements}条):\n${list}`;
@@ -255,7 +251,6 @@ export const getTransactionDetailTool = new DynamicStructuredTool({
           success: true,
           transaction: {
             id: tx.id,
-            name: tx.name,
             description: tx.description,
             amount: tx.amount,
             type: tx.type,
@@ -387,7 +382,7 @@ export const queryAgentTransactionsTool = new DynamicStructuredTool({
  */
 export const searchTransactionsTool = new DynamicStructuredTool({
   name: "search_transactions",
-  description: "通过关键词搜索交易，匹配交易名称或描述。返回完整交易信息。",
+  description: "通过关键词搜索交易，匹配交易描述。返回完整交易信息。",
   schema: z.object({
     keyword: z.string().describe("搜索关键词"),
     ledgerId: z.number().optional().describe("限定在某个账本内搜索（可选）"),
@@ -422,7 +417,6 @@ export const searchTransactionsTool = new DynamicStructuredTool({
           },
           transactions: result.transactions.map((tx: any) => ({
             id: tx.id,
-            name: tx.name,
             description: tx.description,
             amount: tx.amount,
             type: tx.type,
@@ -498,7 +492,6 @@ export const getRecentTransactionsTool = new DynamicStructuredTool({
           },
           transactions: transactions.map((tx: any) => ({
             id: tx.id,
-            name: tx.name,
             description: tx.description,
             amount: tx.amount,
             type: tx.type,

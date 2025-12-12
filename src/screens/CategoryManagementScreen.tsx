@@ -3,7 +3,7 @@
  * 管理交易分类（查看、添加、编辑、删除）
  * 参考 Telegram/Google 风格设计
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -18,10 +18,12 @@ import {
   KeyboardAvoidingView,
   Platform,
   Keyboard,
+  RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Colors, Spacing, FontSizes, BorderRadius, Shadows, FontWeights } from '../constants/theme';
+import { TransactionIcons } from '../constants/icons';
 import { useCategories } from '../context/CategoryContext';
 import { toast, showConfirm } from '../utils/toast';
 import { categoryAPI } from '../api/services';
@@ -132,9 +134,10 @@ const COLOR_OPTIONS = [
 export const CategoryManagementScreen: React.FC = () => {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const { categories, expenseCategories, incomeCategories, refreshCategories } = useCategories();
+  const { categories, expenseCategories, incomeCategories, refreshCategories, isLoading: categoriesLoading } = useCategories();
 
   const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [editName, setEditName] = useState('');
@@ -149,6 +152,24 @@ export const CategoryManagementScreen: React.FC = () => {
   
   // 标签页状态
   const [activeTab, setActiveTab] = useState<TransactionType>('EXPENSE');
+
+  // 页面获得焦点时刷新分类数据
+  useFocusEffect(
+    useCallback(() => {
+      console.log('[CategoryManagementScreen] 页面获得焦点，刷新分类数据');
+      refreshCategories();
+    }, [refreshCategories])
+  );
+
+  // 下拉刷新处理
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      await refreshCategories();
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [refreshCategories]);
 
   // 分离系统预设和自定义分类
   const systemExpenseCategories = expenseCategories.filter(c => c.id && c.isSystem !== false);
@@ -352,7 +373,7 @@ export const CategoryManagementScreen: React.FC = () => {
           activeOpacity={0.7}
         >
           <Icon
-            name="trending-down"
+            name={TransactionIcons.expense}
             size={20}
             color={activeTab === 'EXPENSE' ? Colors.primary : Colors.textSecondary}
           />
@@ -371,7 +392,7 @@ export const CategoryManagementScreen: React.FC = () => {
           activeOpacity={0.7}
         >
           <Icon
-            name="trending-up"
+            name={TransactionIcons.income}
             size={20}
             color={activeTab === 'INCOME' ? Colors.primary : Colors.textSecondary}
           />
@@ -387,7 +408,18 @@ export const CategoryManagementScreen: React.FC = () => {
       </View>
 
       {/* 分类列表 */}
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+      <ScrollView 
+        style={styles.scrollView} 
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            colors={[Colors.primary]}
+            tintColor={Colors.primary}
+          />
+        }
+      >
         {sections.map((section, index) => (
           <View key={index} style={styles.section}>
             <View style={styles.sectionHeader}>
@@ -478,7 +510,7 @@ export const CategoryManagementScreen: React.FC = () => {
                   activeOpacity={0.7}
                 >
                   <Icon
-                    name="trending-down"
+                    name={TransactionIcons.expense}
                     size={18}
                     color={editType === 'EXPENSE' ? Colors.surface : Colors.textSecondary}
                   />
@@ -500,7 +532,7 @@ export const CategoryManagementScreen: React.FC = () => {
                   activeOpacity={0.7}
                 >
                   <Icon
-                    name="trending-up"
+                    name={TransactionIcons.income}
                     size={18}
                     color={editType === 'INCOME' ? Colors.surface : Colors.textSecondary}
                   />

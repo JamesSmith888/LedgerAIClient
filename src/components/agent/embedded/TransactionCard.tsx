@@ -10,10 +10,10 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Icon } from '../../common';
 import { CategoryIcon } from '../../common/CategoryIcon';
 import { Colors, Spacing, FontSizes, FontWeights, BorderRadius, Shadows } from '../../../constants/theme';
+import { TransactionIcons } from '../../../constants/icons';
 
 export interface TransactionCardData {
   id: number;
-  name: string;
   description?: string;
   amount: number;
   type: 'INCOME' | 'EXPENSE';
@@ -22,6 +22,7 @@ export interface TransactionCardData {
   categoryName?: string;
   categoryIcon?: string;
   paymentMethodName?: string;
+  source?: 'MANUAL' | 'AI'; // 交易来源
 }
 
 export interface TransactionCardProps {
@@ -79,7 +80,7 @@ export const TransactionCard: React.FC<TransactionCardProps> = ({
           />
         ) : (
           <Icon 
-            name={isExpense ? 'trending-down' : 'trending-up'} 
+            name={isExpense ? TransactionIcons.expense : TransactionIcons.income} 
             size={compact ? 18 : 22} 
             color={isExpense ? Colors.expense : Colors.income} 
           />
@@ -90,13 +91,19 @@ export const TransactionCard: React.FC<TransactionCardProps> = ({
       <View style={styles.infoContainer}>
         <View style={styles.titleRow}>
           <Text style={[styles.title, compact && styles.titleCompact]} numberOfLines={1}>
-            {transaction.name || transaction.categoryName || '未命名'}
+            {transaction.description || transaction.categoryName || '未命名'}
           </Text>
-          {transaction.categoryName && transaction.name !== transaction.categoryName && (
+          {transaction.categoryName && transaction.description && transaction.description !== transaction.categoryName && (
             <View style={styles.categoryBadge}>
               <Text style={styles.categoryBadgeText} numberOfLines={1}>
                 {transaction.categoryName}
               </Text>
+            </View>
+          )}
+          {/* AI 来源标识 - 不明显的小图标 */}
+          {transaction.source === 'AI' && (
+            <View style={styles.aiSourceBadge}>
+              <Icon name="sparkles" size={12} color={Colors.primary} />
             </View>
           )}
         </View>
@@ -183,6 +190,11 @@ const styles = StyleSheet.create({
   categoryBadgeText: {
     fontSize: 10,
     color: Colors.textSecondary,
+  },
+  // AI 来源标识 - 不明显的小图标
+  aiSourceBadge: {
+    marginLeft: Spacing.xs,
+    opacity: 0.6,
   },
   
   metaRow: {

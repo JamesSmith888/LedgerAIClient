@@ -6,7 +6,7 @@ import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Swipeable } from 'react-native-gesture-handler';
-import { Transaction } from '../../types/transaction';
+import { Transaction, TransactionSource } from '../../types/transaction';
 import { Category } from '../../types/category';
 import { Ledger, LedgerType } from '../../types/ledger';
 import { Colors, Spacing, FontSizes, FontWeights, BorderRadius, Shadows } from '../../theme';
@@ -98,6 +98,16 @@ export const TransactionListItem = React.memo<TransactionListItemProps>(({
                                     <Text style={styles.categoryName} numberOfLines={1}>
                                         {category?.name || '未分类'}
                                     </Text>
+                                    {/* AI 来源标识 - 在标题旁边显示小图标 */}
+                                    {item.source === 'AI' && (
+                                        <View style={styles.aiTitleBadge}>
+                                            <Ionicons
+                                                name="sparkles"
+                                                size={12}
+                                                color={Colors.primary}
+                                            />
+                                        </View>
+                                    )}
                                 </View>
                                 <View style={styles.metaRowContainer}>
                                     <View style={styles.metaRowLeft}>
@@ -162,6 +172,7 @@ export const TransactionListItem = React.memo<TransactionListItemProps>(({
         prevProps.item.id === nextProps.item.id &&
         prevProps.item.amount === nextProps.item.amount &&
         prevProps.item.type === nextProps.item.type &&
+        prevProps.item.source === nextProps.item.source &&
         prevProps.category?.id === nextProps.category?.id &&
         prevProps.ledger?.id === nextProps.ledger?.id
     );
@@ -216,12 +227,19 @@ const styles = StyleSheet.create({
         height: 20,
         justifyContent: 'center',
         marginBottom: 4,
+        flexDirection: 'row',
+        alignItems: 'center',
     },
     categoryName: {
         fontSize: FontSizes.md,
         fontWeight: FontWeights.semibold,
         color: Colors.text,
         lineHeight: 20,
+    },
+    // AI 来源标识 - 标题旁的小图标
+    aiTitleBadge: {
+        marginLeft: 4,
+        opacity: 0.5,
     },
     metaRowContainer: {
         height: 16,
@@ -254,6 +272,11 @@ const styles = StyleSheet.create({
         lineHeight: 16,
         fontStyle: 'italic',
         opacity: 0.7,
+    },
+    // AI 来源标识 - 元数据行中的小图标（备用位置，当前使用标题旁）
+    aiSourceBadge: {
+        marginLeft: 4,
+        opacity: 0.4,
     },
     ledgerBadge: {
         flexDirection: 'row',

@@ -44,3 +44,6 @@ export { SubmitFeedbackScreen } from './SubmitFeedbackScreen';
 // 设置相关页面
 export { SettingsScreen } from './SettingsScreen';
 export { DataExportScreen } from './DataExportScreen';
+export { APIKeySettingsScreen } from './APIKeySettingsScreen';
+export { DataStorageSettingsScreen } from './DataStorageSettingsScreen';
+export { UserPreferenceMemoryScreen } from './UserPreferenceMemoryScreen';

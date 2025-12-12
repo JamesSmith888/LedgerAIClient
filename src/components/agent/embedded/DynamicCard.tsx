@@ -377,14 +377,18 @@ const renderSection = (
       const s = section as ListSection;
       return (
         <View key={key} style={styles.listContainer}>
-          {s.items.map((item, i) => (
-            <View key={i} style={styles.listItem}>
-              <Text style={styles.listBullet}>
-                {s.style === 'numbered' ? `${i + 1}.` : s.style === 'check' ? '✓' : '•'}
-              </Text>
-              <Text style={styles.listItemText}>{item}</Text>
-            </View>
-          ))}
+          {s.items.map((item, i) => {
+            // 兼容两种格式：字符串或 {content: string} 对象
+            const itemText = typeof item === 'string' ? item : (item as any)?.content || String(item);
+            return (
+              <View key={i} style={styles.listItem}>
+                <Text style={styles.listBullet}>
+                  {s.style === 'numbered' ? `${i + 1}.` : s.style === 'check' ? '✓' : '•'}
+                </Text>
+                <Text style={styles.listItemText}>{itemText}</Text>
+              </View>
+            );
+          })}
         </View>
       );
     }

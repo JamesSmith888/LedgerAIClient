@@ -21,6 +21,7 @@ import {
     Shadows,
     Spacing,
 } from '../../constants/theme';
+import { TransactionIcons } from '../../constants/icons';
 
 interface DailyStatistic {
     date: string; // YYYY-MM-DD
@@ -34,6 +35,8 @@ interface DailyStatisticsCalendarProps {
     statistics: DailyStatistic[];
     onDayPress?: (date: Date) => void;
     visible?: boolean;
+    selectedDay?: Date | null;
+    showDetailModal?: boolean;
 }
 
 // 格式化金额（智能缩写）
@@ -52,6 +55,8 @@ export const DailyStatisticsCalendar: React.FC<DailyStatisticsCalendarProps> = (
     statistics,
     onDayPress,
     visible = true,
+    selectedDay = null,
+    showDetailModal = true,
 }) => {
     // 详情弹窗状态
     const [detailVisible, setDetailVisible] = useState(false);
@@ -133,6 +138,12 @@ export const DailyStatisticsCalendar: React.FC<DailyStatisticsCalendarProps> = (
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         return date > today;
+    };
+
+    // 判断是否是选中日期
+    const isSelected = (date: Date | null): boolean => {
+        if (!date || !selectedDay) return false;
+        return date.toDateString() === selectedDay.toDateString();
     };
 
     // 根据金额计算热度等级（0-4）
@@ -223,10 +234,11 @@ export const DailyStatisticsCalendar: React.FC<DailyStatisticsCalendarProps> = (
                                     style={[
                                         styles.dayCell,
                                         isCurrentDay && styles.dayCellToday,
+                                        isSelected(date) && styles.dayCellSelected,
                                         isFutureDay && styles.dayCellFuture,
                                     ]}
                                     onPress={() => {
-                                        if (date && !isFutureDay && hasData) {
+                                        if (date && !isFutureDay && hasData && showDetailModal) {
                                             setSelectedDate(date);
                                             setSelectedDayStat(stat);
                                             setDetailVisible(true);
@@ -339,7 +351,7 @@ export const DailyStatisticsCalendar: React.FC<DailyStatisticsCalendarProps> = (
                                     <View style={styles.detailContent}>
                                         <View style={styles.detailRow}>
                                             <View style={styles.detailIcon}>
-                                                <Icon name="arrow-down-circle" size={32} color={Colors.expense} />
+                                                <Icon name={TransactionIcons.expense} size={32} color={Colors.expense} />
                                             </View>
                                             <View style={styles.detailInfo}>
                                                 <Text style={styles.detailLabel}>支出</Text>
@@ -353,7 +365,7 @@ export const DailyStatisticsCalendar: React.FC<DailyStatisticsCalendarProps> = (
                                         
                                         <View style={styles.detailRow}>
                                             <View style={styles.detailIcon}>
-                                                <Icon name="arrow-up-circle" size={32} color={Colors.income} />
+                                                <Icon name={TransactionIcons.income} size={32} color={Colors.income} />
                                             </View>
                                             <View style={styles.detailInfo}>
                                                 <Text style={styles.detailLabel}>收入</Text>
@@ -401,7 +413,7 @@ export const DailyStatisticsCalendar: React.FC<DailyStatisticsCalendarProps> = (
             {/* 底部统计摘要 */}
 {/*             <View style={styles.summary}>
                 <View style={styles.summaryItem}>
-                    <Icon name="arrow-up-circle" size={16} color={Colors.income} />
+                    <Icon name={TransactionIcons.income} size={16} color={Colors.income} />
                     <Text style={styles.summaryLabel}>总收入</Text>
                     <Text style={styles.summaryValueIncome}>
                         ¥{statistics.reduce((sum, s) => sum + s.income, 0).toFixed(2)}
@@ -409,7 +421,7 @@ export const DailyStatisticsCalendar: React.FC<DailyStatisticsCalendarProps> = (
                 </View>
                 <View style={styles.summaryDivider} />
                 <View style={styles.summaryItem}>
-                    <Icon name="arrow-down-circle" size={16} color={Colors.expense} />
+                    <Icon name={TransactionIcons.expense} size={16} color={Colors.expense} />
                     <Text style={styles.summaryLabel}>总支出</Text>
                     <Text style={styles.summaryValueExpense}>
                         ¥{statistics.reduce((sum, s) => sum + s.expense, 0).toFixed(2)}
@@ -504,6 +516,11 @@ const styles = StyleSheet.create({
     dayCellToday: {
         borderColor: Colors.primary,
         borderWidth: 1.5,
+    },
+    dayCellSelected: {
+        borderColor: Colors.primary,
+        borderWidth: 2,
+        backgroundColor: Colors.primary + '10',
     },
     dayCellFuture: {
         opacity: 0.3,

@@ -1,5 +1,8 @@
 export type TransactionType = 'EXPENSE' | 'INCOME';
 
+// 交易来源类型
+export type TransactionSource = 'MANUAL' | 'AI';
+
 export interface Category {
   id: number;
   name: string;
@@ -13,7 +16,6 @@ export interface Category {
 
 export interface Transaction {
   id: number;
-  name?: string;
   type: TransactionType;
   amount: number;
   categoryId: number;
@@ -25,6 +27,7 @@ export interface Transaction {
   createdByUserNickname?: string;  // 创建人昵称（优先显示）
   paymentMethodId?: number;
   attachmentCount?: number; // 附件数量
+  source?: TransactionSource; // 交易来源：MANUAL-手动录入，AI-AI助手创建
 }
 
 // 预定义的类别

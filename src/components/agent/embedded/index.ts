@@ -32,6 +32,10 @@ export type { StatisticsCardData, StatisticsCardDisplayProps } from './Statistic
 export { ActionButtonsDisplay } from './ActionButtonsDisplay';
 export type { ActionButton, ActionButtonsData, ActionButtonsDisplayProps } from './ActionButtonsDisplay';
 
+// 结果消息组件
+export { ResultMessageDisplay } from './ResultMessageDisplay';
+export type { ResultMessageData } from './ResultMessageDisplay';
+
 // 执行计划展示组件
 export { PlanDisplay } from './PlanDisplay';
 export type { PlanDisplayProps } from './PlanDisplay';

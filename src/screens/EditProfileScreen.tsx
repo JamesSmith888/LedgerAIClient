@@ -7,13 +7,19 @@ import {
   TouchableOpacity,
   ScrollView,
   ActivityIndicator,
+  Image,
+  Platform,
+  PermissionsAndroid,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
+import { launchImageLibrary, ImagePickerResponse } from 'react-native-image-picker';
 import { toast } from '../utils/toast';
 import { Colors, Spacing, FontSizes, FontWeights, BorderRadius } from '../constants/theme';
 import { useAuth } from '../context/AuthContext';
 import { userAPI } from '../api/services/userAPI';
+import { API_BASE_URL } from '../api/config';
 
 export const EditProfileScreen: React.FC = () => {
   const navigation = useNavigation();
@@ -24,6 +30,7 @@ export const EditProfileScreen: React.FC = () => {
   const [avatarUrl, setAvatarUrl] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
 
   // 加载用户信息
   useEffect(() => {
@@ -36,12 +43,112 @@ export const EditProfileScreen: React.FC = () => {
       const profile = await userAPI.getProfile();
       setNickname(profile.nickname || '');
       setEmail(profile.email || '');
-      setAvatarUrl(profile.avatarUrl || '');
+      // 如果是相对路径，拼接完整路径
+      let url = profile.avatarUrl || '';
+      if (url && !url.startsWith('http')) {
+        url = `${API_BASE_URL}${url}`;
+      }
+      setAvatarUrl(url);
     } catch (error) {
       console.error('加载用户信息失败:', error);
       toast.error('加载用户信息失败');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const requestAndroidPermissions = async (): Promise<boolean> => {
+    if (Platform.OS !== 'android') {
+      return true;
+    }
+
+    try {
+      if (Platform.Version >= 33) {
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES,
+          {
+            title: '访问相册权限',
+            message: '需要访问您的相册以选择图片',
+            buttonNeutral: '稍后询问',
+            buttonNegative: '拒绝',
+            buttonPositive: '允许',
+          }
+        );
+        return granted === PermissionsAndroid.RESULTS.GRANTED;
+      } else {
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE,
+          {
+            title: '访问相册权限',
+            message: '需要访问您的相册以选择图片',
+            buttonNeutral: '稍后询问',
+            buttonNegative: '拒绝',
+            buttonPositive: '允许',
+          }
+        );
+        return granted === PermissionsAndroid.RESULTS.GRANTED;
+      }
+    } catch (err) {
+      console.warn('权限请求失败:', err);
+      return false;
+    }
+  };
+
+  const handlePickAvatar = async () => {
+    try {
+      if (Platform.OS === 'android') {
+        const hasPermission = await requestAndroidPermissions();
+        if (!hasPermission) {
+          Alert.alert('权限被拒绝', '需要相册访问权限才能选择图片');
+          return;
+        }
+      }
+
+      const result: ImagePickerResponse = await launchImageLibrary({
+        mediaType: 'photo',
+        quality: 0.8,
+        maxWidth: 800,
+        maxHeight: 800,
+        selectionLimit: 1,
+        includeBase64: false,
+      });
+
+      if (result.didCancel) return;
+      if (result.errorCode) {
+        Alert.alert('错误', result.errorMessage || '选择图片失败');
+        return;
+      }
+
+      if (result.assets && result.assets.length > 0) {
+        const asset = result.assets[0];
+        await uploadAvatar(asset);
+      }
+    } catch (error) {
+      console.error('选择图片失败:', error);
+      Alert.alert('错误', '选择图片失败');
+    }
+  };
+
+  const uploadAvatar = async (asset: any) => {
+    try {
+      setIsUploading(true);
+      const formData = new FormData();
+      formData.append('file', {
+        uri: asset.uri,
+        type: asset.type,
+        name: asset.fileName || 'avatar.jpg',
+      } as any);
+
+      const url = await userAPI.uploadAvatar(formData);
+      // 如果返回的是相对路径，拼接完整路径
+      const fullUrl = url.startsWith('http') ? url : `${API_BASE_URL}${url}`;
+      setAvatarUrl(fullUrl);
+      toast.success('头像上传成功');
+    } catch (error) {
+      console.error('头像上传失败:', error);
+      toast.error('头像上传失败');
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -146,9 +253,43 @@ export const EditProfileScreen: React.FC = () => {
             <Text style={styles.hint}>用于找回密码和接收通知</Text>
           </View>
 
-          {/* 头像URL */}
+          {/* 头像 */}
           <View style={styles.section}>
-            <Text style={styles.label}>头像URL</Text>
+            <Text style={styles.label}>头像</Text>
+            
+            {/* 头像预览与上传 */}
+            <View style={styles.avatarContainer}>
+              <TouchableOpacity onPress={handlePickAvatar} style={styles.avatarWrapper}>
+                {avatarUrl ? (
+                  <Image 
+                    source={{ uri: avatarUrl }} 
+                    style={styles.avatarImage} 
+                    onError={() => console.log('Image load error')}
+                  />
+                ) : (
+                  <View style={styles.avatarPlaceholder}>
+                    <Text style={styles.avatarPlaceholderText}>🖼️</Text>
+                  </View>
+                )}
+                {isUploading && (
+                  <View style={styles.uploadingOverlay}>
+                    <ActivityIndicator color={Colors.primary} />
+                  </View>
+                )}
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={styles.uploadButton}
+                onPress={handlePickAvatar}
+                disabled={isUploading}
+              >
+                <Text style={styles.uploadButtonText}>
+                  {isUploading ? '上传中...' : '更换头像'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={[styles.label, { marginTop: Spacing.md }]}>头像URL (可选)</Text>
             <TextInput
               style={styles.input}
               value={avatarUrl}
@@ -158,19 +299,8 @@ export const EditProfileScreen: React.FC = () => {
               autoCapitalize="none"
               multiline
             />
-            <Text style={styles.hint}>输入图片链接地址</Text>
+            <Text style={styles.hint}>支持上传图片或直接输入图片链接</Text>
           </View>
-
-          {/* 预览区域 */}
-          {avatarUrl && (
-            <View style={styles.previewSection}>
-              <Text style={styles.label}>头像预览</Text>
-              <View style={styles.avatarPreview}>
-                {/* 这里可以使用 Image 组件显示头像预览 */}
-                <Text style={styles.avatarPlaceholder}>🖼️</Text>
-              </View>
-            </View>
-          )}
         </ScrollView>
       </View>
     </SafeAreaView>
@@ -272,21 +402,58 @@ const styles = StyleSheet.create({
     marginTop: Spacing.xs,
   },
 
-  // 预览区域
-  previewSection: {
-    marginBottom: Spacing.xl,
+  // 头像区域
+  avatarContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.md,
   },
-  avatarPreview: {
+  avatarWrapper: {
     width: 100,
     height: 100,
     borderRadius: 50,
+    overflow: 'hidden',
     backgroundColor: Colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
     borderWidth: 1,
     borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: Spacing.lg,
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
   },
   avatarPlaceholder: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.backgroundSecondary,
+  },
+  avatarPlaceholderText: {
     fontSize: 40,
+  },
+  uploadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(255,255,255,0.7)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  uploadButton: {
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
+    backgroundColor: Colors.primary,
+    borderRadius: BorderRadius.md,
+  },
+  uploadButtonText: {
+    color: Colors.surface,
+    fontSize: FontSizes.md,
+    fontWeight: FontWeights.medium,
   },
 });

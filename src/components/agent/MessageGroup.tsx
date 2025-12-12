@@ -18,6 +18,14 @@ import {
   StatisticsCardDisplay,
   ActionButtonsDisplay,
   PlanDisplay,
+  ResultMessageDisplay,
+  // 增强组件
+  DynamicCard,
+  KeyValueListDisplay,
+  ProgressCard,
+  ComparisonCard,
+  PieChartDisplay,
+  BarChartDisplay,
 } from './embedded';
 
 interface MessageGroupProps {
@@ -28,6 +36,8 @@ interface MessageGroupProps {
   /** 嵌入式内容交互回调 */
   onTransactionPress?: (transaction: any) => void;
   onActionButtonPress?: (action: string, payload: any) => void;
+  /** 后续操作建议按钮点击回调 */
+  onSuggestedActionPress?: (message: string) => void;
   /** 长按消息回调 */
   onLongPress?: (message: AgentMessage) => void;
   /** 点击附件回调 */
@@ -134,6 +144,7 @@ const renderEmbeddedContent = (
   handlers: {
     onTransactionPress?: (transaction: any) => void;
     onActionButtonPress?: (action: string, payload: any) => void;
+    onSuggestedActionPress?: (message: string) => void;
   }
 ): React.ReactNode => {
   switch (type) {
@@ -142,6 +153,7 @@ const renderEmbeddedContent = (
         <TransactionListDisplay
           data={data}
           onTransactionPress={handlers.onTransactionPress}
+          onSuggestedActionPress={handlers.onSuggestedActionPress}
         />
       );
     case 'transaction_detail':
@@ -151,6 +163,8 @@ const renderEmbeddedContent = (
           onPress={handlers.onTransactionPress}
         />
       );
+    case 'result_message':
+      return <ResultMessageDisplay data={data} />;
     case 'statistics_card':
       return <StatisticsCardDisplay data={data} />;
     case 'action_buttons':
@@ -160,6 +174,32 @@ const renderEmbeddedContent = (
           onPress={handlers.onActionButtonPress}
         />
       );
+    
+    // ========== 增强组件 ==========
+    
+    case 'dynamic_card':
+      return (
+        <DynamicCard
+          data={data}
+          onButtonPress={handlers.onActionButtonPress}
+        />
+      );
+    
+    case 'key_value_list':
+      return <KeyValueListDisplay data={data} />;
+    
+    case 'progress_card':
+      return <ProgressCard data={data} />;
+    
+    case 'comparison_card':
+      return <ComparisonCard data={data} />;
+    
+    case 'pie_chart':
+      return <PieChartDisplay data={data} />;
+    
+    case 'bar_chart':
+      return <BarChartDisplay data={data} />;
+
     default:
       return null;
   }
@@ -179,6 +219,7 @@ export const MessageGroup: React.FC<MessageGroupProps> = ({
   isUser,
   onTransactionPress,
   onActionButtonPress,
+  onSuggestedActionPress,
   onLongPress,
   onAttachmentPress,
 }) => {
@@ -296,6 +337,7 @@ export const MessageGroup: React.FC<MessageGroupProps> = ({
           {renderEmbeddedContent(type, data, {
             onTransactionPress,
             onActionButtonPress,
+            onSuggestedActionPress,
           })}
         </View>
       );

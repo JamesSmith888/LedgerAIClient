@@ -17,11 +17,33 @@
 import { DynamicStructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 
+// ========== 公共 Schema 定义 ==========
+
+/**
+ * 智能建议 Schema
+ * 用于在渲染结果的同时提供后续操作建议
+ * 这些建议会显示在输入框上方的智能建议栏中
+ */
+const suggestedActionSchema = z.object({
+  label: z.string().describe("建议按钮的显示文本，如'添加新交易'、'查看详情'"),
+  message: z.string().describe("点击后发送的消息内容"),
+});
+
+/**
+ * 可选的智能建议数组 Schema
+ * 添加到需要支持智能建议的渲染工具中
+ */
+const suggestedActionsSchema = z.array(suggestedActionSchema)
+  .max(5)
+  .optional()
+  .describe("后续操作建议列表（可选，最多5个），会显示在输入框上方供用户快速选择");
+
 // 嵌入内容类型
 export type EmbedType = 
   // 基础组件
   | 'transaction_list'    // 交易列表
   | 'transaction_detail'  // 交易详情
+  | 'result_message'      // 操作结果消息
   | 'statistics_card'     // 统计卡片
   | 'action_buttons'      // 操作按钮
   // 增强组件
@@ -173,36 +195,63 @@ export function hasEmbedMarkers(content: string): boolean {
  */
 export const renderTransactionListTool = new DynamicStructuredTool({
   name: "render_transaction_list",
-  description: "将交易数据渲染为可视化列表展示给用户。当需要向用户展示多条交易记录时调用此工具。",
+  description: `【交易列表展示】将多条交易数据渲染为可视化列表。
+
+⚠️ 必须提供 transactions 数组，否则会报错！
+
+✅ 适用场景：
+- 查询交易列表（按条件筛选、搜索等）
+- 展示某个时间段的账单
+- 显示某个分类下的所有交易
+
+❌ 不适用场景：
+- 单条交易创建/修改后（应使用 render_transaction_detail）
+- 删除成功等操作提示（应使用 render_result_message）
+- 分类管理结果（应使用 render_dynamic_card）
+
+💡 可选：提供 suggestedActions 在列表下方显示后续操作建议按钮。`,
   schema: z.object({
     title: z.string().optional().describe("列表标题，如'最近交易'、'本月支出'"),
     message: z.string().optional().describe("提示信息"),
     transactions: z.array(z.object({
       id: z.number(),
-      name: z.string(),
-      description: z.string().optional(),
+      description: z.string().optional().nullable(),
       amount: z.number(),
       type: z.enum(['INCOME', 'EXPENSE']),
       transactionDateTime: z.string(),
-      ledgerName: z.string().optional(),
-      categoryName: z.string().optional(),
-      categoryIcon: z.string().optional(),
-      paymentMethodName: z.string().optional(),
+      ledgerName: z.string().optional().nullable(),
+      categoryName: z.string().optional().nullable(),
+      categoryIcon: z.string().optional().nullable(),
+      paymentMethodName: z.string().optional().nullable(),
     })).describe("交易记录列表"),
     statistics: z.object({
-      totalIncome: z.number(),
-      totalExpense: z.number(),
-      balance: z.number(),
-      count: z.number(),
+      totalIncome: z.number().optional().default(0).describe("总收入，默认0"),
+      totalExpense: z.number().optional().default(0).describe("总支出，默认0"),
+      balance: z.number().optional().describe("结余，可省略则自动计算"),
+      count: z.number().optional().describe("交易笔数，可省略则自动计算"),
     }).optional().describe("汇总统计"),
     pagination: z.object({
       page: z.number(),
       totalElements: z.number(),
       totalPages: z.number(),
     }).optional().describe("分页信息"),
+    suggestedActions: suggestedActionsSchema,
   }),
-  func: async (data) => {
+  func: async (input) => {
     console.log('🎨 [renderTransactionListTool] Rendering transaction list');
+    if (input.suggestedActions?.length) {
+      console.log('🎨 [renderTransactionListTool] With suggestions:', input.suggestedActions.length);
+    }
+    
+    // 补全 statistics 中可能缺失的字段
+    const data = { ...input };
+    if (data.statistics) {
+      const stats = data.statistics;
+      stats.totalIncome = stats.totalIncome ?? 0;
+      stats.totalExpense = stats.totalExpense ?? 0;
+      stats.balance = stats.balance ?? (stats.totalIncome - stats.totalExpense);
+      stats.count = stats.count ?? data.transactions.length;
+    }
     
     // 直接返回 JSON 字符串，useAgentChat 会解析并创建 embedded 消息
     return JSON.stringify(data);
@@ -214,23 +263,31 @@ export const renderTransactionListTool = new DynamicStructuredTool({
  */
 export const renderTransactionDetailTool = new DynamicStructuredTool({
   name: "render_transaction_detail",
-  description: "将单条交易详情渲染为卡片展示给用户。当需要向用户展示某条交易的完整信息时调用此工具。",
+  description: `【单条交易展示】将交易详情渲染为卡片展示。
+
+⚠️ 必须提供完整的交易对象（id, amount, type, transactionDateTime 等）
+
+适用场景：
+- 创建交易成功后，展示新建的交易详情
+- 修改交易成功后，展示更新后的交易详情
+- 查询某条交易的完整信息
+
+不适用场景：删除成功等无需展示交易详情的操作（请用 render_result_message）`,
   schema: z.object({
     id: z.number(),
-    name: z.string(),
-    description: z.string().optional(),
+    description: z.string().optional().nullable(),
     amount: z.number(),
     type: z.enum(['INCOME', 'EXPENSE']),
     transactionDateTime: z.string(),
-    ledgerId: z.number().optional(),
-    ledgerName: z.string().optional(),
-    categoryId: z.number().optional(),
-    categoryName: z.string().optional(),
-    categoryIcon: z.string().optional(),
-    paymentMethodId: z.number().optional(),
-    paymentMethodName: z.string().optional(),
-    createdByUserNickname: z.string().optional(),
-    attachmentCount: z.number().optional(),
+    ledgerId: z.number().optional().nullable(),
+    ledgerName: z.string().optional().nullable(),
+    categoryId: z.number().optional().nullable(),
+    categoryName: z.string().optional().nullable(),
+    categoryIcon: z.string().optional().nullable(),
+    paymentMethodId: z.number().optional().nullable(),
+    paymentMethodName: z.string().optional().nullable(),
+    createdByUserNickname: z.string().optional().nullable(),
+    attachmentCount: z.number().optional().nullable(),
   }),
   func: async (transaction) => {
     console.log('🎨 [renderTransactionDetailTool] Rendering transaction detail:', transaction.id);
@@ -241,25 +298,82 @@ export const renderTransactionDetailTool = new DynamicStructuredTool({
 });
 
 /**
+ * 渲染操作结果消息工具
+ * 用于显示简单的操作成功/失败消息
+ */
+export const renderResultMessageTool = new DynamicStructuredTool({
+  name: "render_result_message",
+  description: `【简单文字反馈】渲染简洁的操作结果消息。
+
+✅ 适用场景：
+- 删除成功、批量操作成功等无需展示具体数据的操作
+- 系统设置更改、权限变更等配置类操作
+- 错误提示、警告信息
+
+❌ 不适用场景：
+- 创建/修改交易后（应使用 render_transaction_detail 展示完整交易信息）
+- 查询交易列表（应使用 render_transaction_list）
+- 统计数据展示（应使用 render_statistics_card 或图表工具）
+
+💡 可选：提供 suggestedActions 在消息下方显示后续操作建议按钮。`,
+  schema: z.object({
+    message: z.string().describe("要显示的消息内容"),
+    type: z.enum(['success', 'error', 'info', 'warning']).optional().default('success').describe("消息类型"),
+    icon: z.string().optional().describe("图标名称（Ionicons），默认根据type自动选择"),
+    title: z.string().optional().describe("标题（可选）"),
+    suggestedActions: suggestedActionsSchema,
+  }),
+  func: async (data) => {
+    console.log('🎨 [renderResultMessageTool] Rendering result message:', data.message);
+    if (data.suggestedActions?.length) {
+      console.log('🎨 [renderResultMessageTool] With suggestions:', data.suggestedActions.length);
+    }
+    // 自动选择图标
+    const iconMap: Record<string, string> = {
+      success: 'checkmark-circle',
+      error: 'close-circle',
+      info: 'information-circle',
+      warning: 'warning',
+    };
+    const result = {
+      ...data,
+      icon: data.icon || iconMap[data.type || 'success'],
+    };
+    return JSON.stringify(result);
+  },
+});
+
+/**
  * 渲染统计卡片工具
  */
 export const renderStatisticsCardTool = new DynamicStructuredTool({
   name: "render_statistics_card",
-  description: "渲染一个统计汇总卡片，展示收入、支出、结余等数据。",
+  description: `渲染统计汇总卡片，展示收入、支出、结余等核心数据。
+
+配合 analyze 工具使用：
+1. 调用 analyze(analysisType='summary') 获取汇总数据
+2. 直接使用返回的 totalIncome、totalExpense、balance、transactionCount
+3. 如需对比，调用 analyze(analysisType='comparison') 获取变化率
+
+💡 可选：提供 suggestedActions 在卡片下方显示后续操作建议按钮。`,
   schema: z.object({
-    title: z.string().describe("卡片标题，如'本月汇总'"),
-    period: z.string().optional().describe("统计周期，如'2024年11月'"),
-    totalIncome: z.number().describe("总收入"),
-    totalExpense: z.number().describe("总支出"),
-    balance: z.number().describe("结余"),
+    title: z.string().describe("卡片标题，如'本月汇总'、'11月收支报告'"),
+    period: z.string().optional().describe("统计周期，如'2024年11月'、'11.1-11.28'"),
+    totalIncome: z.number().describe("总收入金额"),
+    totalExpense: z.number().describe("总支出金额"),
+    balance: z.number().describe("结余金额（收入-支出）"),
     transactionCount: z.number().optional().describe("交易笔数"),
     comparedToPrevious: z.object({
-      incomeChange: z.number().optional(),
-      expenseChange: z.number().optional(),
-    }).optional().describe("与上期对比"),
+      incomeChange: z.number().optional().describe("收入变化率百分比"),
+      expenseChange: z.number().optional().describe("支出变化率百分比"),
+    }).optional().describe("与上期对比的变化率"),
+    suggestedActions: suggestedActionsSchema,
   }),
   func: async (data) => {
     console.log('🎨 [renderStatisticsCardTool] Rendering statistics card');
+    if (data.suggestedActions?.length) {
+      console.log('🎨 [renderStatisticsCardTool] With suggestions:', data.suggestedActions.length);
+    }
     
     return JSON.stringify(data);
   },
@@ -291,6 +405,7 @@ export const renderActionButtonsTool = new DynamicStructuredTool({
 export const renderTools = [
   renderTransactionListTool,
   renderTransactionDetailTool,
+  renderResultMessageTool,
   renderStatisticsCardTool,
   renderActionButtonsTool,
 ];
@@ -299,113 +414,49 @@ export const renderTools = [
 
 /**
  * DynamicSection Schema - 动态卡片的内容块定义
+ * 
+ * 注意：使用简化的 schema 结构以兼容 Google Generative AI API
+ * Google API 不支持 discriminatedUnion、literal、tuple 等高级 JSON Schema 特性
  */
-const dynamicSectionSchema = z.discriminatedUnion('type', [
-  // 文本
-  z.object({
-    type: z.literal('text'),
-    content: z.string(),
-    style: z.enum(['normal', 'secondary', 'small', 'bold']).optional(),
-    align: z.enum(['left', 'center', 'right']).optional(),
-  }),
-  // 标题
-  z.object({
-    type: z.literal('title'),
-    content: z.string(),
-    level: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
-    icon: z.string().optional(),
-  }),
-  // 键值对
-  z.object({
-    type: z.literal('key_value'),
-    label: z.string(),
-    value: z.string(),
-    valueColor: z.enum(['normal', 'primary', 'success', 'warning', 'error']).optional(),
-    icon: z.string().optional(),
-  }),
-  // 水平键值对行
-  z.object({
-    type: z.literal('key_value_row'),
-    items: z.array(z.object({
-      label: z.string(),
-      value: z.string(),
-      valueColor: z.enum(['normal', 'primary', 'success', 'warning', 'error']).optional(),
-    })),
-  }),
-  // 分隔线
-  z.object({
-    type: z.literal('divider'),
-    style: z.enum(['solid', 'dashed']).optional(),
-  }),
-  // 空白间距
-  z.object({
-    type: z.literal('spacer'),
-    size: z.enum(['xs', 'sm', 'md', 'lg']).optional(),
-  }),
-  // 图标+文本
-  z.object({
-    type: z.literal('icon_text'),
-    icon: z.string(),
-    content: z.string(),
-    iconColor: z.string().optional(),
-  }),
-  // 高亮块
-  z.object({
-    type: z.literal('highlight'),
-    content: z.string(),
-    variant: z.enum(['info', 'success', 'warning', 'error']).optional(),
-    icon: z.string().optional(),
-  }),
-  // 列表
-  z.object({
-    type: z.literal('list'),
-    items: z.array(z.string()),
-    style: z.enum(['bullet', 'numbered', 'check']).optional(),
-  }),
-  // 进度条
-  z.object({
-    type: z.literal('progress'),
-    value: z.number(),
-    label: z.string().optional(),
-    maxValue: z.number().optional(),
-    showPercentage: z.boolean().optional(),
-    color: z.enum(['primary', 'success', 'warning', 'error']).optional(),
-  }),
-  // 标签行
-  z.object({
-    type: z.literal('tag_row'),
-    tags: z.array(z.object({
-      text: z.string(),
-      color: z.enum(['primary', 'success', 'warning', 'error', 'default']).optional(),
-    })),
-  }),
-  // 按钮
-  z.object({
-    type: z.literal('button'),
+const dynamicSectionSchema = z.object({
+  type: z.enum([
+    'text', 'title', 'key_value', 'key_value_row', 'divider', 'spacer',
+    'icon_text', 'highlight', 'list', 'progress', 'tag_row', 
+    'button', 'button_row', 'amount'
+  ]).describe("内容块类型"),
+  // 通用字段
+  content: z.string().optional().describe("文本内容（text/title/icon_text/highlight 类型使用）"),
+  label: z.string().optional().describe("标签（key_value/progress/amount 类型使用）"),
+  value: z.any().optional().describe("值（key_value 用 string，progress/amount 用 number）"),
+  icon: z.string().optional().describe("图标"),
+  // 样式字段
+  style: z.enum(['normal', 'secondary', 'small', 'bold', 'solid', 'dashed', 'bullet', 'numbered', 'check', 'primary', 'secondary', 'danger']).optional().describe("样式"),
+  align: z.enum(['left', 'center', 'right']).optional().describe("对齐方式"),
+  size: z.enum(['xs', 'sm', 'md', 'lg', 'normal', 'large', 'xlarge']).optional().describe("尺寸"),
+  color: z.enum(['normal', 'primary', 'success', 'warning', 'error', 'default']).optional().describe("颜色"),
+  variant: z.enum(['info', 'success', 'warning', 'error']).optional().describe("变体样式"),
+  level: z.number().optional().describe("标题级别（1-3）"),
+  // 列表/数组字段
+  items: z.array(z.any()).optional().describe("子项数组（key_value_row/list/tag_row/button_row 类型使用）"),
+  tags: z.array(z.object({
+    text: z.string(),
+    color: z.enum(['primary', 'success', 'warning', 'error', 'default']).optional(),
+  })).optional().describe("标签数组（tag_row 类型使用）"),
+  buttons: z.array(z.object({
     label: z.string(),
     action: z.string(),
     payload: z.any().optional(),
     style: z.enum(['primary', 'secondary', 'danger']).optional(),
-  }),
-  // 按钮行
-  z.object({
-    type: z.literal('button_row'),
-    buttons: z.array(z.object({
-      label: z.string(),
-      action: z.string(),
-      payload: z.any().optional(),
-      style: z.enum(['primary', 'secondary', 'danger']).optional(),
-    })),
-  }),
-  // 金额
-  z.object({
-    type: z.literal('amount'),
-    value: z.number(),
-    label: z.string().optional(),
-    size: z.enum(['normal', 'large', 'xlarge']).optional(),
-    showSign: z.boolean().optional(),
-  }),
-]);
+  })).optional().describe("按钮数组（button_row 类型使用）"),
+  // 其他字段
+  action: z.string().optional().describe("按钮操作"),
+  payload: z.any().optional().describe("按钮操作参数"),
+  maxValue: z.number().optional().describe("最大值（progress 类型使用）"),
+  showPercentage: z.boolean().optional().describe("显示百分比"),
+  showSign: z.boolean().optional().describe("显示正负号"),
+  iconColor: z.string().optional().describe("图标颜色"),
+  valueColor: z.enum(['normal', 'primary', 'success', 'warning', 'error']).optional().describe("值的颜色"),
+});
 
 /**
  * 渲染动态卡片工具 - 核心增强组件
@@ -413,21 +464,28 @@ const dynamicSectionSchema = z.discriminatedUnion('type', [
  */
 export const renderDynamicCardTool = new DynamicStructuredTool({
   name: "render_dynamic_card",
-  description: `渲染一个动态卡片，AI 可以灵活组合各种元素。适用于需要自定义展示格式的场景。
+  description: `【灵活展示】渲染可自定义的动态卡片，适用于复杂信息展示。
+
+适用场景：
+- 需要展示多项相关信息（如分类详情、操作摘要）
+- 需要图标、列表、高亮等富文本效果
+- render_result_message 不够用时的升级选择
+
 支持的 section 类型：
 - text: 文本段落
 - title: 标题（支持层级）
 - key_value: 键值对
 - key_value_row: 水平键值对行
 - divider: 分隔线
-- spacer: 空白间距
 - icon_text: 图标+文本
 - highlight: 高亮提示块
 - list: 列表（bullet/numbered/check）
 - progress: 进度条
 - tag_row: 标签行
 - button/button_row: 按钮
-- amount: 金额显示`,
+- amount: 金额显示
+
+💡 可选：提供 suggestedActions 在卡片下方显示后续操作建议按钮。`,
   schema: z.object({
     title: z.string().optional().describe("卡片标题"),
     titleIcon: z.string().optional().describe("标题图标（Ionicons 名称）"),
@@ -435,9 +493,13 @@ export const renderDynamicCardTool = new DynamicStructuredTool({
     sections: z.array(dynamicSectionSchema).describe("内容块数组"),
     footer: z.string().optional().describe("底部文字"),
     variant: z.enum(['default', 'outlined', 'elevated']).optional().describe("卡片样式"),
+    suggestedActions: suggestedActionsSchema,
   }),
   func: async (data) => {
     console.log('🎨 [renderDynamicCardTool] Rendering dynamic card');
+    if (data.suggestedActions?.length) {
+      console.log('🎨 [renderDynamicCardTool] With suggestions:', data.suggestedActions.length);
+    }
     return JSON.stringify(data);
   },
 });
@@ -525,22 +587,34 @@ export const renderComparisonCardTool = new DynamicStructuredTool({
  */
 export const renderPieChartTool = new DynamicStructuredTool({
   name: "render_pie_chart",
-  description: "渲染饼图，适合展示分类占比、收支结构等数据分布。",
+  description: `渲染饼图，展示分类占比、收支结构分布。当用户想看"饼图"、"占比"、"分布"、"结构"时使用。
+
+数据来源（二选一）：
+1. transaction 工具的 statistics action 返回的 categoryStats
+2. analyze 工具返回的 categoryBreakdown
+
+转换规则：
+- items[].label = categoryName（分类名称）
+- items[].value = amount（金额数值，必须是 number 类型）
+- items[].icon = categoryIcon（分类图标）
+- valueFormat = 'currency'（金额格式）
+- centerLabel = '总支出' 或 '总收入'
+- centerValue = 格式化的总金额，如 '¥1,193.63'`,
   schema: z.object({
-    title: z.string().optional().describe("图表标题"),
+    title: z.string().optional().describe("图表标题，如'本周消费分布'、'支出结构'"),
     titleIcon: z.string().optional().describe("标题图标"),
     items: z.array(z.object({
-      label: z.string().describe("数据项名称"),
-      value: z.number().describe("数值"),
-      color: z.string().optional().describe("颜色（可选，会自动分配）"),
-      icon: z.string().optional().describe("图标"),
-    })).describe("数据项数组"),
-    showLegend: z.boolean().optional().describe("是否显示图例"),
-    showPercentage: z.boolean().optional().describe("是否显示百分比"),
-    showValue: z.boolean().optional().describe("是否显示数值"),
-    valueFormat: z.enum(['currency', 'number', 'percentage']).optional().describe("数值格式"),
-    centerLabel: z.string().optional().describe("中心显示的标签"),
-    centerValue: z.string().optional().describe("中心显示的数值"),
+      label: z.string().describe("分类名称"),
+      value: z.number().describe("金额数值（必须是数字）"),
+      color: z.string().optional().describe("颜色（可选，自动分配）"),
+      icon: z.string().optional().describe("分类图标emoji"),
+    })).describe("饼图数据项"),
+    showLegend: z.boolean().optional().describe("显示图例，默认true"),
+    showPercentage: z.boolean().optional().describe("显示百分比，默认true"),
+    showValue: z.boolean().optional().describe("显示数值，默认true"),
+    valueFormat: z.enum(['currency', 'number', 'percentage']).optional().describe("数值格式，通常用'currency'"),
+    centerLabel: z.string().optional().describe("中心标签，如'总支出'"),
+    centerValue: z.string().optional().describe("中心数值，如'¥1,193.63'"),
   }),
   func: async (data) => {
     console.log('🎨 [renderPieChartTool] Rendering pie chart');
@@ -553,23 +627,36 @@ export const renderPieChartTool = new DynamicStructuredTool({
  */
 export const renderBarChartTool = new DynamicStructuredTool({
   name: "render_bar_chart",
-  description: "渲染柱状图，适合展示时间序列数据、分类对比等。支持双柱对比（如收入vs支出）。",
+  description: `渲染柱状图，展示时间趋势或分类对比。当用户想看"趋势"、"走势"、"柱状图"、"对比"时使用。
+
+数据来源：
+1. 趋势图：analyze 工具的 trend 分析返回的 trendData
+2. 分类对比：transaction/statistics 的 categoryStats 或 analyze 的 categoryBreakdown
+
+转换规则（趋势图）：
+- items[].label = trendData 的 label（如"11-24"）
+- items[].value = expense（支出金额）
+- items[].secondaryValue = income（收入金额，可选）
+- legendLabels = ['支出', '收入']
+
+转换规则（分类对比）：
+- items[].label = categoryName
+- items[].value = amount`,
   schema: z.object({
     title: z.string().optional().describe("图表标题"),
     titleIcon: z.string().optional().describe("标题图标"),
     items: z.array(z.object({
-      label: z.string().describe("X轴标签，如'1月'、'餐饮'"),
+      label: z.string().describe("X轴标签"),
       value: z.number().describe("主数值"),
-      secondaryValue: z.number().optional().describe("次数值（用于对比）"),
+      secondaryValue: z.number().optional().describe("次数值（对比用）"),
       color: z.string().optional().describe("主柱颜色"),
       secondaryColor: z.string().optional().describe("次柱颜色"),
-    })).describe("数据项数组"),
-    showValues: z.boolean().optional().describe("是否显示数值标签"),
+    })).describe("柱状图数据项"),
+    showValues: z.boolean().optional().describe("显示数值标签"),
     valueFormat: z.enum(['currency', 'number', 'percentage']).optional().describe("数值格式"),
-    orientation: z.enum(['vertical', 'horizontal']).optional().describe("方向，默认垂直"),
-    showLegend: z.boolean().optional().describe("是否显示图例"),
-    legendLabels: z.tuple([z.string(), z.string()]).optional()
-      .describe("图例标签，如['收入', '支出']"),
+    orientation: z.enum(['vertical', 'horizontal']).optional().describe("方向，默认vertical"),
+    showLegend: z.boolean().optional().describe("显示图例"),
+    legendLabels: z.array(z.string()).optional().describe("图例标签数组，如 ['支出', '收入']"),
   }),
   func: async (data) => {
     console.log('🎨 [renderBarChartTool] Rendering bar chart');

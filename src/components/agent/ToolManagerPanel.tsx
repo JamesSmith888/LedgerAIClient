@@ -2,7 +2,11 @@
  * ToolManagerPanel - 工具管理面板组件
  * 
  * 让用户查看和管理 AI Agent 可用的工具
- * 支持按分类查看、启用/禁用单个工具或整个分类
+ * 支持：
+ * 1. 按分类查看工具
+ * 2. 启用/禁用单个工具或整个分类
+ * 3. 查看和管理工具授权状态
+ * 4. 领域工具的子操作授权管理
  */
 
 import React, { useState, useCallback } from 'react';
@@ -14,11 +18,10 @@ import {
   ScrollView,
   Switch,
   Modal,
-  Animated,
 } from 'react-native';
 import { Icon } from '../common';
 import { Colors, Spacing, FontSizes, FontWeights, BorderRadius, Shadows } from '../../constants/theme';
-import { ToolMeta, ToolCategory, TOOL_CATEGORIES } from '../../types/tool';
+import { ToolMeta, ToolCategory, ToolAction, TOOL_CATEGORIES } from '../../types/tool';
 
 interface ToolManagerPanelProps {
   visible: boolean;
@@ -31,6 +34,7 @@ interface ToolManagerPanelProps {
     core: number;
     optional: number;
     enabledOptional: number;
+    authorized?: number;
   };
   onToggleTool: (toolName: string) => void;
   onToggleCategory: (category: ToolCategory, enabled: boolean) => void;
@@ -39,55 +43,166 @@ interface ToolManagerPanelProps {
 }
 
 /**
+ * 工具操作项组件（用于领域工具的子操作）
+ */
+const ToolActionItem: React.FC<{
+  toolName: string;
+  action: ToolAction;
+  onToggleAlwaysAllowed?: (allowed: boolean) => void;
+}> = ({ toolName, action, onToggleAlwaysAllowed }) => {
+  const getRiskColor = (level: string) => {
+    switch (level) {
+      case 'low': return Colors.success;
+      case 'medium': return Colors.warning;
+      case 'high': return '#FF6B6B';
+      case 'critical': return Colors.error;
+      default: return Colors.textSecondary;
+    }
+  };
+
+  const getRiskLabel = (level: string) => {
+    switch (level) {
+      case 'low': return '低';
+      case 'medium': return '中';
+      case 'high': return '高';
+      case 'critical': return '危';
+      default: return '';
+    }
+  };
+
+  return (
+    <View style={styles.actionItem}>
+      <View style={styles.actionInfo}>
+        <View style={styles.actionNameRow}>
+          <Text style={styles.actionName}>{action.displayName}</Text>
+          <View style={[styles.riskBadge, { backgroundColor: getRiskColor(action.riskLevel) + '20' }]}>
+            <Text style={[styles.riskBadgeText, { color: getRiskColor(action.riskLevel) }]}>
+              {getRiskLabel(action.riskLevel)}
+            </Text>
+          </View>
+        </View>
+        <Text style={styles.actionDescription} numberOfLines={1}>
+          {action.description}
+        </Text>
+      </View>
+      
+      {action.isAlwaysAllowed ? (
+        <TouchableOpacity
+          style={styles.authorizedBadge}
+          onPress={() => onToggleAlwaysAllowed?.(false)}
+          activeOpacity={0.6}
+        >
+          <Text style={styles.authorizedBadgeText}>已授权</Text>
+          <View style={styles.revokeIcon}>
+            <Icon name="close" size={10} color="#FFFFFF" />
+          </View>
+        </TouchableOpacity>
+      ) : (
+        <TouchableOpacity
+          style={styles.authButton}
+          onPress={() => onToggleAlwaysAllowed?.(true)}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.authButtonText}>授权</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+};
+
+/**
  * 单个工具项组件
  */
 const ToolItem: React.FC<{
   tool: ToolMeta;
   onToggle: () => void;
-  onToggleAlwaysAllowed?: (allowed: boolean) => void;
-}> = ({ tool, onToggle, onToggleAlwaysAllowed }) => {
+  onToggleAlwaysAllowed?: (toolName: string, allowed: boolean) => void;
+  expanded?: boolean;
+  onToggleExpand?: () => void;
+}> = ({ tool, onToggle, onToggleAlwaysAllowed, expanded, onToggleExpand }) => {
+  const hasActions = tool.actions && tool.actions.length > 0;
+  
   return (
     <View style={[styles.toolItem, !tool.isEnabled && styles.toolItemDisabled]}>
-      <View style={styles.toolIcon}>
-        <Text style={styles.toolIconText}>{tool.icon}</Text>
-      </View>
-      
-      <View style={styles.toolInfo}>
-        <View style={styles.toolNameRow}>
-          <Text style={[styles.toolName, !tool.isEnabled && styles.toolNameDisabled]}>
-            {tool.displayName}
-          </Text>
-          {tool.isCore && (
-            <View style={styles.coreBadge}>
-              <Text style={styles.coreBadgeText}>核心</Text>
-            </View>
-          )}
-          {tool.isAlwaysAllowed && (
-            <TouchableOpacity
-              style={styles.alwaysAllowedBadge}
-              onPress={() => onToggleAlwaysAllowed?.(false)}
-              activeOpacity={0.6}
-            >
-              <Text style={styles.alwaysAllowedBadgeText}>已授权</Text>
-              <View style={styles.revokeButton}>
-                <Icon name="close" size={10} color="#FFFFFF" />
-              </View>
-            </TouchableOpacity>
-          )}
+      <TouchableOpacity 
+        style={styles.toolHeader}
+        onPress={hasActions ? onToggleExpand : undefined}
+        activeOpacity={hasActions ? 0.7 : 1}
+      >
+        <View style={styles.toolIcon}>
+          <Text style={styles.toolIconText}>{tool.icon}</Text>
         </View>
-        <Text style={styles.toolDescription} numberOfLines={1}>
-          {tool.description}
-        </Text>
-      </View>
+        
+        <View style={styles.toolInfo}>
+          <View style={styles.toolNameRow}>
+            <Text style={[styles.toolName, !tool.isEnabled && styles.toolNameDisabled]}>
+              {tool.displayName}
+            </Text>
+            {tool.isCore && (
+              <View style={styles.coreBadge}>
+                <Text style={styles.coreBadgeText}>核心</Text>
+              </View>
+            )}
+            {tool.isAlwaysAllowed && !hasActions && (
+              <TouchableOpacity
+                style={styles.alwaysAllowedBadge}
+                onPress={() => onToggleAlwaysAllowed?.(tool.name, false)}
+                activeOpacity={0.6}
+              >
+                <Text style={styles.alwaysAllowedBadgeText}>已授权</Text>
+                <View style={styles.revokeButton}>
+                  <Icon name="close" size={10} color="#FFFFFF" />
+                </View>
+              </TouchableOpacity>
+            )}
+            {hasActions && (
+              <View style={styles.actionCountBadge}>
+                <Text style={styles.actionCountText}>
+                  {tool.actions?.filter(a => a.isAlwaysAllowed).length || 0}/{tool.actions?.length}
+                </Text>
+              </View>
+            )}
+          </View>
+          <Text style={styles.toolDescription} numberOfLines={1}>
+            {tool.description}
+          </Text>
+        </View>
+        
+        <View style={styles.toolControls}>
+          {hasActions && (
+            <Icon 
+              name={expanded ? 'chevron-up' : 'chevron-down'} 
+              size={18} 
+              color={Colors.textSecondary}
+              style={{ marginRight: Spacing.sm }}
+            />
+          )}
+          <Switch
+            value={tool.isEnabled}
+            onValueChange={onToggle}
+            disabled={tool.isCore}
+            trackColor={{ false: Colors.border, true: Colors.primaryLight }}
+            thumbColor={tool.isEnabled ? Colors.primary : Colors.textSecondary}
+            ios_backgroundColor={Colors.border}
+          />
+        </View>
+      </TouchableOpacity>
       
-      <Switch
-        value={tool.isEnabled}
-        onValueChange={onToggle}
-        disabled={tool.isCore}
-        trackColor={{ false: Colors.border, true: Colors.primaryLight }}
-        thumbColor={tool.isEnabled ? Colors.primary : Colors.textSecondary}
-        ios_backgroundColor={Colors.border}
-      />
+      {/* 子操作列表 */}
+      {hasActions && expanded && (
+        <View style={styles.actionsContainer}>
+          {tool.actions?.map(action => (
+            <ToolActionItem
+              key={action.name}
+              toolName={tool.name}
+              action={action}
+              onToggleAlwaysAllowed={(allowed) => 
+                onToggleAlwaysAllowed?.(`${tool.name}.${action.name}`, allowed)
+              }
+            />
+          ))}
+        </View>
+      )}
     </View>
   );
 };
@@ -104,19 +219,31 @@ const ToolCategorySection: React.FC<{
   isExpanded: boolean;
   onToggleExpand: () => void;
 }> = ({ category, tools, onToggleTool, onToggleCategory, onToggleAlwaysAllowed, isExpanded, onToggleExpand }) => {
+  const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
+  
   // 防御性检查
   const safeTools = tools || [];
-  
-  console.log(`🔧 [ToolCategorySection] ${category.id}:`, {
-    toolsReceived: tools?.length,
-    safeToolsCount: safeTools.length,
-    isExpanded,
-  });
   
   const enabledCount = safeTools.filter(t => t.isEnabled).length;
   const allEnabled = safeTools.length > 0 && enabledCount === safeTools.length;
   const someEnabled = enabledCount > 0 && enabledCount < safeTools.length;
   const coreCount = safeTools.filter(t => t.isCore).length;
+
+  const toggleToolExpand = useCallback((toolName: string) => {
+    setExpandedTools(prev => {
+      const next = new Set(prev);
+      if (next.has(toolName)) {
+        next.delete(toolName);
+      } else {
+        next.add(toolName);
+      }
+      return next;
+    });
+  }, []);
+  
+  if (safeTools.length === 0) {
+    return null;
+  }
   
   return (
     <View style={styles.categorySection}>
@@ -173,16 +300,11 @@ const ToolCategorySection: React.FC<{
               key={tool.name}
               tool={tool}
               onToggle={() => onToggleTool(tool.name)}
-              onToggleAlwaysAllowed={(allowed) => onToggleAlwaysAllowed?.(tool.name, allowed)}
+              onToggleAlwaysAllowed={onToggleAlwaysAllowed}
+              expanded={expandedTools.has(tool.name)}
+              onToggleExpand={() => toggleToolExpand(tool.name)}
             />
           ))}
-        </View>
-      )}
-      {isExpanded && safeTools.length === 0 && (
-        <View style={styles.toolsList}>
-          <Text style={{ padding: Spacing.md, color: Colors.textSecondary }}>
-            该分类暂无工具
-          </Text>
         </View>
       )}
     </View>
@@ -207,16 +329,6 @@ export const ToolManagerPanel: React.FC<ToolManagerPanelProps> = ({
   const [expandedCategories, setExpandedCategories] = useState<Set<ToolCategory>>(
     new Set() // 默认为空，即所有分类收起
   );
-
-  // 调试日志
-  console.log('🔧 [ToolManagerPanel] Rendering with data:', {
-    visible,
-    toolsCount: tools?.length,
-    tools: tools?.map(t => t.name),
-    toolsByCategory: toolsByCategory ? Object.keys(toolsByCategory).map(k => `${k}: ${toolsByCategory[k as ToolCategory]?.length || 0}`) : 'undefined',
-    stats,
-    TOOL_CATEGORIES_count: TOOL_CATEGORIES.length,
-  });
 
   const toggleCategoryExpand = useCallback((category: ToolCategory) => {
     setExpandedCategories(prev => {
@@ -245,6 +357,9 @@ export const ToolManagerPanel: React.FC<ToolManagerPanelProps> = ({
               <Text style={styles.headerTitle}>🛠️ 工具管理</Text>
               <Text style={styles.headerSubtitle}>
                 已启用 {stats.enabled}/{stats.total} 个工具
+                {stats.authorized !== undefined && stats.authorized > 0 && (
+                  <Text style={styles.authorizedCount}> • {stats.authorized} 已授权</Text>
+                )}
               </Text>
             </View>
             
@@ -270,7 +385,7 @@ export const ToolManagerPanel: React.FC<ToolManagerPanelProps> = ({
           <View style={styles.infoBar}>
             <Icon name="information-circle-outline" size={16} color={Colors.textSecondary} />
             <Text style={styles.infoText}>
-              禁用工具后，AI 将无法使用该功能。核心工具无法禁用。
+              启用工具数量越少，AI 更容易选择正确的工具
             </Text>
           </View>
           
@@ -279,18 +394,25 @@ export const ToolManagerPanel: React.FC<ToolManagerPanelProps> = ({
             style={styles.content}
             showsVerticalScrollIndicator={false}
           >
-            {TOOL_CATEGORIES.map(category => (
-              <ToolCategorySection
-                key={category.id}
-                category={category}
-                tools={toolsByCategory[category.id]}
-                onToggleTool={onToggleTool}
-                onToggleCategory={(enabled) => onToggleCategory(category.id, enabled)}
-                onToggleAlwaysAllowed={onToggleAlwaysAllowed}
-                isExpanded={expandedCategories.has(category.id)}
-                onToggleExpand={() => toggleCategoryExpand(category.id)}
-              />
-            ))}
+            {TOOL_CATEGORIES.map(category => {
+              const categoryTools = toolsByCategory[category.id];
+              if (!categoryTools || categoryTools.length === 0) {
+                return null;
+              }
+              
+              return (
+                <ToolCategorySection
+                  key={category.id}
+                  category={category}
+                  tools={categoryTools}
+                  onToggleTool={onToggleTool}
+                  onToggleCategory={(enabled) => onToggleCategory(category.id, enabled)}
+                  onToggleAlwaysAllowed={onToggleAlwaysAllowed}
+                  isExpanded={expandedCategories.has(category.id)}
+                  onToggleExpand={() => toggleCategoryExpand(category.id)}
+                />
+              );
+            })}
             
             {/* 底部留白 */}
             <View style={styles.bottomSpacer} />
@@ -311,7 +433,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surface,
     borderTopLeftRadius: BorderRadius.xl,
     borderTopRightRadius: BorderRadius.xl,
-    height: '80%', // 固定高度而不是 maxHeight
+    height: '85%',
     ...Shadows.lg,
   },
   
@@ -337,6 +459,9 @@ const styles = StyleSheet.create({
     fontSize: FontSizes.sm,
     color: Colors.textSecondary,
     marginTop: 2,
+  },
+  authorizedCount: {
+    color: Colors.success,
   },
   headerRight: {
     flexDirection: 'row',
@@ -365,6 +490,8 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.backgroundSecondary,
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
   },
   infoText: {
     fontSize: FontSizes.xs,
@@ -431,7 +558,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primaryLight,
   },
   categoryTogglePartial: {
-    backgroundColor: `${Colors.warning}20`, // 使用 warning 颜色的 12% 透明度
+    backgroundColor: `${Colors.warning}20`,
   },
   categoryToggleText: {
     fontSize: FontSizes.xs,
@@ -446,17 +573,20 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.backgroundSecondary,
   },
   toolItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
     backgroundColor: Colors.surface,
     marginHorizontal: Spacing.sm,
     marginVertical: 2,
     borderRadius: BorderRadius.md,
+    overflow: 'hidden',
   },
   toolItemDisabled: {
     opacity: 0.6,
+  },
+  toolHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
   },
   toolIcon: {
     width: 36,
@@ -477,6 +607,7 @@ const styles = StyleSheet.create({
   toolNameRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    flexWrap: 'wrap',
   },
   toolName: {
     fontSize: FontSizes.sm,
@@ -524,10 +655,107 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  actionCountBadge: {
+    backgroundColor: Colors.backgroundSecondary,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: BorderRadius.sm,
+    marginLeft: Spacing.xs,
+  },
+  actionCountText: {
+    fontSize: 10,
+    color: Colors.textSecondary,
+    fontWeight: FontWeights.medium,
+  },
   toolDescription: {
     fontSize: FontSizes.xs,
     color: Colors.textSecondary,
     marginTop: 2,
+  },
+  toolControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  
+  // 子操作容器
+  actionsContainer: {
+    backgroundColor: Colors.backgroundSecondary,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  actionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: Spacing.xs,
+    paddingHorizontal: Spacing.sm,
+  },
+  actionInfo: {
+    flex: 1,
+    marginRight: Spacing.sm,
+  },
+  actionNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  actionName: {
+    fontSize: FontSizes.xs,
+    fontWeight: FontWeights.medium,
+    color: Colors.text,
+  },
+  riskBadge: {
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 4,
+    marginLeft: Spacing.xs,
+  },
+  riskBadgeText: {
+    fontSize: 9,
+    fontWeight: FontWeights.semibold,
+  },
+  actionDescription: {
+    fontSize: 10,
+    color: Colors.textSecondary,
+    marginTop: 1,
+  },
+  authorizedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: `${Colors.success}20`,
+    paddingLeft: 6,
+    paddingRight: 3,
+    paddingVertical: 2,
+    borderRadius: BorderRadius.sm,
+    borderWidth: 1,
+    borderColor: `${Colors.success}40`,
+  },
+  authorizedBadgeText: {
+    fontSize: 10,
+    color: Colors.success,
+    fontWeight: FontWeights.semibold,
+    marginRight: 4,
+  },
+  revokeIcon: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: Colors.success,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  authButton: {
+    backgroundColor: Colors.backgroundSecondary,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: BorderRadius.sm,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  authButtonText: {
+    fontSize: 10,
+    color: Colors.textSecondary,
+    fontWeight: FontWeights.medium,
   },
 });
 

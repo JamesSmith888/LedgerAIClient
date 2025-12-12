@@ -8,6 +8,7 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Icon } from '../../common';
 import { Colors, Spacing, FontSizes, FontWeights, BorderRadius, Shadows } from '../../../constants/theme';
+import { TrendIcons } from '../../../constants/icons';
 
 export interface StatisticsCardData {
   title: string;
@@ -36,7 +37,7 @@ export const StatisticsCardDisplay: React.FC<StatisticsCardDisplayProps> = ({ da
     return (
       <View style={styles.changeIndicator}>
         <Icon 
-          name={isPositive ? 'trending-up' : 'trending-down'} 
+          name={isPositive ? TrendIcons.up : TrendIcons.down} 
           size={12} 
           color={isPositive ? Colors.income : Colors.expense} 
         />

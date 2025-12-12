@@ -1,8 +1,9 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { Category } from '../types/transaction';
 import { categoryAPI, CategoryResponse } from '../api/services';
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '../types/transaction';
 import { useAuth } from './AuthContext';
+import { appEventEmitter, AppEvents } from '../utils/eventEmitter';
 
 interface CategoryContextType {
     categories: Category[];
@@ -34,7 +35,7 @@ export const CategoryProvider: React.FC<{ children: ReactNode }> = ({ children }
     const [error, setError] = useState<string | null>(null);
 
     // 加载分类数据
-    const loadCategories = async () => {
+    const loadCategories = useCallback(async () => {
         try {
             setIsLoading(true);
             setError(null);
@@ -42,7 +43,7 @@ export const CategoryProvider: React.FC<{ children: ReactNode }> = ({ children }
             const data = await categoryAPI.getAll();
             const converted = data.map(convertToCategory);
 
-            console.log('转换后的分类数据:', converted);
+            console.log('[CategoryContext] 分类数据已刷新:', converted.length);
             setCategories(converted);
         } catch (err: any) {
             console.error('加载分类数据时出错:', err);
@@ -55,7 +56,7 @@ export const CategoryProvider: React.FC<{ children: ReactNode }> = ({ children }
         } finally {
             setIsLoading(false);
         }
-    };
+    }, []);
 
     // 组件挂载时加载分类 - 只在用户已认证后执行
     useEffect(() => {
@@ -69,7 +70,21 @@ export const CategoryProvider: React.FC<{ children: ReactNode }> = ({ children }
             const defaultCategories = [...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES];
             setCategories(defaultCategories);
         }
-    }, [authLoading, isAuthenticated]);
+    }, [authLoading, isAuthenticated, loadCategories]);
+
+    // 监听分类变更事件（来自 AI Agent 工具等外部操作）
+    useEffect(() => {
+        const unsubscribe = appEventEmitter.on(AppEvents.CATEGORY_CHANGED, () => {
+            console.log('[CategoryContext] 收到分类变更事件，刷新数据');
+            if (isAuthenticated) {
+                loadCategories();
+            }
+        });
+
+        return () => {
+            unsubscribe();
+        };
+    }, [isAuthenticated, loadCategories]);
 
     // 计算支出和收入分类
     const expenseCategories = categories.filter(c => c.type === 'EXPENSE');

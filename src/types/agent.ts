@@ -6,7 +6,7 @@
 /**
  * 消息类型
  */
-export type MessageType = 'text' | 'system' | 'action' | 'tool_call' | 'tool_result' | 'thinking' | 'embedded' | 'plan';
+export type MessageType = 'text' | 'system' | 'action' | 'tool_call' | 'tool_result' | 'thinking' | 'embedded' | 'plan' | 'reflection' | 'intent';
 
 /**
  * 嵌入式内容类型
@@ -29,6 +29,7 @@ export type EmbeddedContentType =
   // 基础组件
   | 'transaction_list'    // 交易列表
   | 'transaction_detail'  // 交易详情
+  | 'result_message'      // 操作结果消息
   | 'statistics_card'     // 统计卡片
   | 'action_buttons'      // 操作按钮
   // 增强组件
@@ -45,6 +46,18 @@ export type EmbeddedContentType =
 export interface EmbeddedContent {
   type: EmbeddedContentType;
   data: any;
+}
+
+/**
+ * AI 建议的后续操作
+ */
+export interface SuggestedAction {
+  /** 按钮显示的文本 */
+  label: string;
+  /** 点击后发送的消息 */
+  message: string;
+  /** 预测用户采纳度 (0-1)，可选 */
+  confidence?: number;
 }
 
 /**
@@ -81,6 +94,8 @@ export interface AgentMessage {
     attachments?: Attachment[];
     // 嵌入式内容（用于 embedded 类型消息）
     embeddedContent?: EmbeddedContent;
+    // AI 建议的后续操作（显示在输入框上方）
+    suggestedActions?: SuggestedAction[];
     // 自定义数据
     [key: string]: any;
   };
@@ -199,6 +214,8 @@ export interface AgentRuntimeContext {
     isDefault: boolean;
   }>;
   currentDateTime: string;
+  /** 用户偏好记忆上下文（由 UserPreferenceMemory 生成） */
+  userPreferenceContext?: string;
 }
 
 /**

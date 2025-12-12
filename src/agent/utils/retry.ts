@@ -333,6 +333,9 @@ export const TIMEOUT_CONFIG = {
   /** LLM 调用超时：60 秒 */
   LLM_INVOKE: 60000,
   
+  /** LLM 调用超时（带图片）：120 秒，图片处理需要更长时间 */
+  LLM_INVOKE_WITH_IMAGE: 120000,
+  
   /** 工具执行超时：30 秒 */
   TOOL_EXECUTE: 30000,
   

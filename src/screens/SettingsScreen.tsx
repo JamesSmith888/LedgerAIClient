@@ -13,11 +13,11 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { Colors, Spacing, FontSizes, BorderRadius, Shadows, FontWeights } from '../constants/theme';
-import { Icon, FeatherIcons, AppIcons } from '../components/common';
+import { Icon, FeatherIcons, AppIcons, IconType } from '../components/common';
 
 interface SettingItem {
     icon: string;
-    iconType?: 'ionicons' | 'feather';
+    iconType?: IconType;
     title: string;
     subtitle?: string;
     route?: string;
@@ -38,8 +38,38 @@ export const SettingsScreen: React.FC = () => {
     // 设置项配置
     const settingSections: SettingSection[] = [
         {
+            title: 'AI 设置',
+            items: [
+                {
+                    icon: AppIcons.lockOutline,
+                    title: 'API Key 配置',
+                    subtitle: '配置您的 AI 模型 API Key',
+                    route: 'APIKeySettings',
+                    showArrow: true,
+                    iconColor: Colors.info,
+                },
+                {
+                    icon: 'brain',
+                    iconType: 'material-community',
+                    title: '智能记忆',
+                    subtitle: '管理 AI 学习到的用户偏好',
+                    route: 'UserPreferenceMemory',
+                    showArrow: true,
+                    iconColor: '#8B5CF6',
+                },
+            ],
+        },
+        {
             title: '数据管理',
             items: [
+                {
+                    icon: AppIcons.cloudOutline,
+                    title: '数据存储',
+                    subtitle: '配置数据存储位置与智能记忆',
+                    route: 'DataStorageSettings',
+                    showArrow: true,
+                    iconColor: Colors.success,
+                },
                 {
                     icon: AppIcons.downloadOutline,
                     title: '导出数据',

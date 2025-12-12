@@ -2,12 +2,12 @@
  * ConfirmationDialog - 危险操作确认弹窗
  * 
  * 用于 Human-in-the-Loop 确认机制：
- * - 显示操作详情
- * - 风险级别指示
- * - 确认/取消操作
- * - 支持修改参数（可选）
+ * - 用户友好的操作描述（让普通用户一眼看懂）
+ * - 可折叠的技术详情（给高级用户/调试用）
+ * - 风险级别视觉区分
+ * - 确认/取消/始终允许操作
  * 
- * 设计参考：iOS Alert + Material Design Dialog
+ * 设计参考：iOS Alert + Material Design Dialog + 用户体验优先
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
@@ -21,10 +21,13 @@ import {
   Animated,
   Dimensions,
   Platform,
+  LayoutAnimation,
 } from 'react-native';
 import { Icon } from '../common';
 import { Colors, Spacing, FontSizes, BorderRadius, Shadows, FontWeights } from '../../constants/theme';
 import type { ConfirmationRequest } from '../../agent/utils/permissions';
+
+// 注意：新架构下 LayoutAnimation 默认可用，无需调用 setLayoutAnimationEnabledExperimental
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -41,6 +44,8 @@ interface ConfirmationDialogProps {
   onCancel: (reason?: string) => void;
   /** 关闭回调 */
   onClose: () => void;
+  /** "始终允许"回调（可选） */
+  onAlwaysAllow?: (toolName: string) => void;
   /** 是否显示取消原因输入（可选） */
   showReasonInput?: boolean;
   /** 自动关闭延时（毫秒，0表示不自动关闭） */
@@ -53,26 +58,38 @@ const RISK_CONFIG = {
   low: {
     color: Colors.success,
     icon: 'checkmark-circle',
-    label: '低风险',
-    bgColor: '#E8F5E9',
+    label: '安全操作',
+    headerBg: '#E8F5E9',
+    headerBorder: '#4CAF50',
+    titleColor: '#1B5E20',
+    emoji: '✅',
   },
   medium: {
-    color: '#FF9800',
-    icon: 'alert-circle',
-    label: '中等风险',
-    bgColor: '#FFF3E0',
+    color: Colors.primary,
+    icon: 'information-circle',
+    label: '需要确认',
+    headerBg: '#E3F2FD',
+    headerBorder: '#2196F3',
+    titleColor: '#0D47A1',
+    emoji: '📝',
   },
   high: {
-    color: '#FF5722',
-    icon: 'warning',
-    label: '高风险',
-    bgColor: '#FBE9E7',
+    color: '#FF9800',
+    icon: 'alert-circle',
+    label: '请谨慎操作',
+    headerBg: '#FFF3E0',
+    headerBorder: '#FF9800',
+    titleColor: '#E65100',
+    emoji: '⚠️',
   },
   critical: {
     color: Colors.error,
-    icon: 'skull',
-    label: '关键危险',
-    bgColor: '#FFEBEE',
+    icon: 'warning',
+    label: '危险操作',
+    headerBg: '#FFEBEE',
+    headerBorder: '#F44336',
+    titleColor: '#B71C1C',
+    emoji: '🔴',
   },
 };
 
@@ -84,6 +101,7 @@ export const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
   onConfirm,
   onCancel,
   onClose,
+  onAlwaysAllow,
   showReasonInput = false,
   autoCloseDelay = 0,
 }) => {
@@ -91,13 +109,25 @@ export const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
   const [fadeAnim] = useState(new Animated.Value(0));
   const [scaleAnim] = useState(new Animated.Value(0.9));
   
+  // 技术详情展开状态
+  const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
+  
   // 倒计时
   const [countdown, setCountdown] = useState(0);
   const [isExpired, setIsExpired] = useState(false);
 
+  // 切换技术详情
+  const toggleTechnicalDetails = useCallback(() => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setShowTechnicalDetails(prev => !prev);
+  }, []);
+
   // 打开动画
   useEffect(() => {
     if (visible) {
+      // 重置技术详情状态
+      setShowTechnicalDetails(false);
+      
       Animated.parallel([
         Animated.timing(fadeAnim, {
           toValue: 1,
@@ -172,43 +202,134 @@ export const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
    * 处理取消
    */
   const handleCancel = useCallback(() => {
+    setShowTechnicalDetails(false);
     onCancel();
     onClose();
   }, [onCancel, onClose]);
 
   /**
-   * 渲染风险指示器
+   * 处理"始终允许"
    */
-  const renderRiskIndicator = () => {
-    if (!request) return null;
+  const handleAlwaysAllow = useCallback(() => {
+    if (!request || !onAlwaysAllow) return;
     
-    const config = RISK_CONFIG[request.riskLevel];
+    // 对于领域工具，使用 toolName.action 作为 key
+    const action = request.toolArgs?.action as string | undefined;
+    const key = action ? `${request.toolName}.${action}` : request.toolName;
+    onAlwaysAllow(key);
+    handleConfirm();
+  }, [request, onAlwaysAllow, handleConfirm]);
+
+  /**
+   * 渲染用户友好的关键信息点
+   */
+  const renderKeyPoints = () => {
+    const userFriendly = request?.userFriendly;
+    if (!userFriendly?.keyPoints || userFriendly.keyPoints.length === 0) return null;
     
     return (
-      <View style={[styles.riskBadge, { backgroundColor: config.bgColor }]}>
-        <Icon name={config.icon} size={16} color={config.color} />
-        <Text style={[styles.riskLabel, { color: config.color }]}>
-          {config.label}
+      <View style={styles.keyPointsContainer}>
+        {userFriendly.keyPoints.map((point, index) => (
+          <View key={index} style={styles.keyPointItem}>
+            <Text style={styles.keyPointText}>{point}</Text>
+          </View>
+        ))}
+      </View>
+    );
+  };
+
+  /**
+   * 渲染影响说明
+   */
+  const renderImpact = () => {
+    const userFriendly = request?.userFriendly;
+    const riskLevel = request?.riskLevel;
+    
+    if (!userFriendly?.impact) return null;
+    
+    const isDanger = riskLevel === 'critical' || riskLevel === 'high';
+    
+    return (
+      <View style={[
+        styles.impactContainer,
+        isDanger && styles.impactContainerDanger,
+      ]}>
+        <Text style={[
+          styles.impactText,
+          isDanger && styles.impactTextDanger,
+        ]}>
+          {userFriendly.impact}
         </Text>
       </View>
     );
   };
 
   /**
-   * 渲染操作详情
+   * 渲染技术详情（可折叠）
    */
-  const renderDetails = () => {
-    if (!request?.details || request.details.length === 0) return null;
+  const renderTechnicalDetails = () => {
+    const technicalDetails = request?.technicalDetails;
+    if (!technicalDetails) return null;
     
     return (
-      <View style={styles.detailsContainer}>
-        <Text style={styles.detailsTitle}>操作详情</Text>
-        {request.details.map((detail, index) => (
-          <View key={index} style={styles.detailRow}>
-            <Icon name="chevron-forward" size={14} color={Colors.textSecondary} />
-            <Text style={styles.detailText}>{detail}</Text>
+      <View style={styles.technicalSection}>
+        {/* 展开/收起按钮 */}
+        <TouchableOpacity
+          style={styles.technicalToggle}
+          onPress={toggleTechnicalDetails}
+          activeOpacity={0.7}
+        >
+          <Icon
+            name="help-circle-outline"
+            size={16}
+            color={Colors.textSecondary}
+          />
+          <Text style={styles.technicalToggleText}>
+            {showTechnicalDetails ? '收起技术详情' : '这是什么？查看详情'}
+          </Text>
+          <Icon
+            name={showTechnicalDetails ? 'chevron-up' : 'chevron-down'}
+            size={16}
+            color={Colors.textSecondary}
+          />
+        </TouchableOpacity>
+        
+        {/* 技术详情内容 */}
+        {showTechnicalDetails && (
+          <View style={styles.technicalContent}>
+            <View style={styles.technicalHeader}>
+              <Icon name="code-slash-outline" size={14} color={Colors.textSecondary} />
+              <Text style={styles.technicalTitle}>技术信息</Text>
+            </View>
+            
+            <Text style={styles.technicalExplain}>
+              AI 助手正在请求执行以下操作，这些是发送给服务器的具体指令：
+            </Text>
+            
+            <View style={styles.technicalItem}>
+              <Text style={styles.technicalLabel}>接口名称</Text>
+              <Text style={styles.technicalValue}>{technicalDetails.toolName}</Text>
+            </View>
+            
+            {technicalDetails.action && (
+              <View style={styles.technicalItem}>
+                <Text style={styles.technicalLabel}>操作类型</Text>
+                <Text style={styles.technicalValue}>{technicalDetails.action}</Text>
+              </View>
+            )}
+            
+            {technicalDetails.formattedArgs && technicalDetails.formattedArgs.length > 0 && (
+              <View style={styles.technicalArgsSection}>
+                <Text style={styles.technicalArgsTitle}>请求参数：</Text>
+                {technicalDetails.formattedArgs.map((arg, index) => (
+                  <Text key={index} style={styles.technicalArgItem}>
+                    • {arg}
+                  </Text>
+                ))}
+              </View>
+            )}
           </View>
-        ))}
+        )}
       </View>
     );
   };
@@ -256,6 +377,11 @@ export const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
 
   const riskConfig = RISK_CONFIG[request.riskLevel];
   const isCritical = request.riskLevel === 'critical';
+  const userFriendly = request.userFriendly;
+  
+  // 获取显示标题（优先使用用户友好版本）
+  const displayTitle = userFriendly?.title || '需要确认';
+  const displayDescription = userFriendly?.description || request.message;
 
   return (
     <Modal
@@ -271,33 +397,28 @@ export const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
             { transform: [{ scale: scaleAnim }] },
           ]}
         >
-          {/* 头部：风险指示 */}
-          <View style={[styles.header, { backgroundColor: riskConfig.bgColor }]}>
-            <View style={styles.iconContainer}>
-              <Icon name={riskConfig.icon} size={32} color={riskConfig.color} />
-            </View>
-            {renderRiskIndicator()}
+          {/* 头部：使用用户友好的标题 */}
+          <View style={[styles.header, { backgroundColor: riskConfig.headerBg, borderBottomColor: riskConfig.headerBorder }]}>
+            <Text style={styles.headerEmoji}>{riskConfig.emoji}</Text>
+            <Text style={[styles.headerTitle, { color: riskConfig.titleColor }]}>
+              {displayTitle}
+            </Text>
           </View>
 
           {/* 内容区域 */}
           <ScrollView 
             style={styles.content}
             contentContainerStyle={styles.contentContainer}
+            showsVerticalScrollIndicator={false}
           >
-            {/* 标题 */}
-            <Text style={styles.title}>需要确认</Text>
+            {/* 主要描述（用户友好版） */}
+            <Text style={styles.message}>{displayDescription}</Text>
             
-            {/* 主要消息 */}
-            <Text style={styles.message}>{request.message}</Text>
+            {/* 关键信息点 */}
+            {renderKeyPoints()}
             
-            {/* 工具名称 */}
-            <View style={styles.toolBadge}>
-              <Icon name="construct-outline" size={14} color={Colors.textSecondary} />
-              <Text style={styles.toolName}>{request.toolName}</Text>
-            </View>
-            
-            {/* 操作详情 */}
-            {renderDetails()}
+            {/* 影响说明 */}
+            {renderImpact()}
             
             {/* 倒计时 */}
             {renderCountdown()}
@@ -310,10 +431,13 @@ export const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
               <View style={styles.criticalWarning}>
                 <Icon name="warning" size={18} color={Colors.error} />
                 <Text style={styles.criticalText}>
-                  这是一个不可逆操作，请谨慎确认！
+                  ⚠️ 此操作执行后无法撤销，请仔细确认！
                 </Text>
               </View>
             )}
+            
+            {/* 技术详情（可折叠） */}
+            {renderTechnicalDetails()}
           </ScrollView>
 
           {/* 按钮区域 */}
@@ -340,7 +464,7 @@ export const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
               disabled={isExpired}
             >
               <Icon 
-                name={isCritical ? 'skull' : 'checkmark'} 
+                name={isCritical ? 'warning' : 'checkmark'} 
                 size={18} 
                 color={Colors.surface} 
               />
@@ -349,6 +473,18 @@ export const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
               </Text>
             </TouchableOpacity>
           </View>
+          
+          {/* 始终允许按钮（非 critical 级别且提供了回调） */}
+          {request.riskLevel !== 'critical' && onAlwaysAllow && !isExpired && (
+            <TouchableOpacity
+              style={styles.alwaysAllowButton}
+              onPress={handleAlwaysAllow}
+              activeOpacity={0.7}
+            >
+              <Icon name="checkmark-circle-outline" size={16} color={Colors.primary} />
+              <Text style={styles.alwaysAllowText}>始终允许此操作</Text>
+            </TouchableOpacity>
+          )}
         </Animated.View>
       </Animated.View>
     </Modal>
@@ -561,8 +697,20 @@ const styles = StyleSheet.create({
   
   // 头部
   header: {
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: Spacing.lg,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    borderBottomWidth: 2,
+  },
+  headerEmoji: {
+    fontSize: 24,
+    marginRight: Spacing.sm,
+  },
+  headerTitle: {
+    fontSize: FontSizes.lg,
+    fontWeight: FontWeights.bold,
+    flex: 1,
   },
   iconContainer: {
     width: 60,
@@ -589,11 +737,11 @@ const styles = StyleSheet.create({
   
   // 内容
   content: {
-    maxHeight: SCREEN_HEIGHT * 0.35,
+    maxHeight: SCREEN_HEIGHT * 0.4,
   },
   contentContainer: {
     paddingHorizontal: Spacing.lg,
-    paddingBottom: Spacing.md,
+    paddingVertical: Spacing.md,
   },
   title: {
     fontSize: FontSizes.lg,
@@ -605,10 +753,140 @@ const styles = StyleSheet.create({
   message: {
     fontSize: FontSizes.md,
     color: Colors.text,
-    textAlign: 'center',
-    lineHeight: 22,
+    lineHeight: 24,
     marginBottom: Spacing.md,
   },
+  
+  // 关键信息点（用户友好版）
+  keyPointsContainer: {
+    backgroundColor: Colors.backgroundSecondary,
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  keyPointItem: {
+    paddingVertical: 4,
+  },
+  keyPointText: {
+    fontSize: FontSizes.md,
+    color: Colors.text,
+    lineHeight: 22,
+  },
+  
+  // 影响说明
+  impactContainer: {
+    backgroundColor: Colors.backgroundSecondary,
+    borderRadius: BorderRadius.md,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  impactContainerDanger: {
+    backgroundColor: '#FFF3E0',
+  },
+  impactText: {
+    fontSize: FontSizes.sm,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+  },
+  impactTextDanger: {
+    color: '#E65100',
+  },
+  
+  // 技术详情区域
+  technicalSection: {
+    marginTop: Spacing.sm,
+  },
+  technicalToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.sm,
+  },
+  technicalToggleText: {
+    fontSize: FontSizes.sm,
+    color: Colors.textSecondary,
+    marginHorizontal: Spacing.xs,
+  },
+  technicalContent: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+    marginTop: Spacing.sm,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  technicalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+    paddingBottom: Spacing.xs,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  technicalTitle: {
+    fontSize: FontSizes.xs,
+    color: Colors.textSecondary,
+    fontWeight: FontWeights.medium,
+    marginLeft: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  technicalExplain: {
+    fontSize: FontSizes.xs,
+    color: Colors.textSecondary,
+    lineHeight: 18,
+    marginBottom: Spacing.sm,
+  },
+  technicalItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  technicalLabel: {
+    fontSize: FontSizes.sm,
+    color: Colors.textSecondary,
+  },
+  technicalValue: {
+    fontSize: FontSizes.sm,
+    color: Colors.text,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  technicalArgsSection: {
+    marginTop: Spacing.sm,
+    paddingTop: Spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  technicalArgsTitle: {
+    fontSize: FontSizes.xs,
+    color: Colors.textSecondary,
+    marginBottom: 4,
+  },
+  technicalArgItem: {
+    fontSize: FontSizes.xs,
+    color: Colors.textSecondary,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    lineHeight: 18,
+    paddingLeft: Spacing.xs,
+  },
+  
+  // 始终允许按钮
+  alwaysAllowButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: Colors.border,
+  },
+  alwaysAllowText: {
+    fontSize: FontSizes.sm,
+    color: Colors.primary,
+    marginLeft: Spacing.xs,
+  },
+  
   toolBadge: {
     flexDirection: 'row',
     alignItems: 'center',

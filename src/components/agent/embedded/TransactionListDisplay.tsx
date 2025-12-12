@@ -10,7 +10,7 @@
  */
 
 import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Icon } from '../../common';
 import { TransactionCard, TransactionCardData } from './TransactionCard';
 import { CollapsibleSection } from './CollapsibleSection';
@@ -23,6 +23,12 @@ export interface TransactionListStatistics {
   count: number;
 }
 
+export interface SuggestedAction {
+  label: string;
+  message: string;
+}
+
+
 export interface TransactionListDisplayData {
   title?: string;
   message?: string;
@@ -33,11 +39,13 @@ export interface TransactionListDisplayData {
     totalElements: number;
     totalPages: number;
   };
+  suggestedActions?: SuggestedAction[];
 }
 
 export interface TransactionListDisplayProps {
   data: TransactionListDisplayData;
   onTransactionPress?: (transaction: TransactionCardData) => void;
+  onSuggestedActionPress?: (message: string) => void;
   maxDisplayCount?: number; // 最多显示多少条，超过后折叠
   compact?: boolean;
 }
@@ -45,6 +53,7 @@ export interface TransactionListDisplayProps {
 export const TransactionListDisplay: React.FC<TransactionListDisplayProps> = ({
   data,
   onTransactionPress,
+  onSuggestedActionPress,
   maxDisplayCount = 5,
   compact = false,
 }) => {
@@ -154,6 +163,8 @@ export const TransactionListDisplay: React.FC<TransactionListDisplayProps> = ({
           </Text>
         </View>
       )}
+
+      {/* 后续操作建议已移至底部 SuggestedActionsBar，此处不再显示 */}
     </View>
   );
 };

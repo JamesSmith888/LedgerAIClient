@@ -34,6 +34,35 @@ export interface ToolPermission {
 }
 
 /**
+ * 用户友好的确认信息
+ * 设计目标：让普通用户（非技术人员）一眼就能理解要做什么
+ */
+export interface UserFriendlyConfirmation {
+  /** 简洁的操作标题，如"记录一笔消费" */
+  title: string;
+  /** 通俗易懂的操作说明，用自然语言描述 */
+  description: string;
+  /** 要展示给用户的关键信息（人话版），如 ["花了 50 元", "买了午餐"] */
+  keyPoints: string[];
+  /** 操作的潜在影响说明 */
+  impact?: string;
+}
+
+/**
+ * 技术详情（给高级用户/调试用）
+ */
+export interface TechnicalDetails {
+  /** 工具/API 名称 */
+  toolName: string;
+  /** 具体操作类型 */
+  action?: string;
+  /** 原始参数（JSON 格式） */
+  rawArgs: Record<string, unknown>;
+  /** 格式化的参数列表 */
+  formattedArgs: string[];
+}
+
+/**
  * 确认请求
  */
 export interface ConfirmationRequest {
@@ -41,7 +70,9 @@ export interface ConfirmationRequest {
   toolName: string;
   toolArgs: Record<string, unknown>;
   riskLevel: RiskLevel;
+  /** @deprecated 使用 userFriendly.description 替代 */
   message: string;
+  /** @deprecated 使用 technicalDetails.formattedArgs 替代 */
   details: string[];
   timestamp: number;
   expiresAt: number;  // 确认请求过期时间
@@ -50,6 +81,10 @@ export interface ConfirmationRequest {
     onReject: (reason?: string) => void;
     onModify?: (modifiedArgs: Record<string, unknown>) => void;
   };
+  /** 用户友好的确认信息（新增） */
+  userFriendly: UserFriendlyConfirmation;
+  /** 技术详情（可选展开查看） */
+  technicalDetails: TechnicalDetails;
 }
 
 // ============ 默认权限配置 ============
@@ -470,6 +505,218 @@ export function getAllPermissions(): ToolPermission[] {
 // ============ 确认请求管理 ============
 
 /**
+ * 工具操作的用户友好描述映射
+ * key: toolName 或 toolName.action
+ */
+const userFriendlyDescriptions: Record<string, {
+  title: string;
+  descriptionTemplate: (args: Record<string, unknown>) => string;
+  keyPointsGenerator: (args: Record<string, unknown>) => string[];
+  impactTemplate?: (args: Record<string, unknown>) => string;
+}> = {
+  // 交易相关操作
+  'transaction.create': {
+    title: '记录一笔账',
+    descriptionTemplate: (args) => {
+      const type = args.type === 'EXPENSE' ? '支出' : args.type === 'INCOME' ? '收入' : '交易';
+      return `AI 助手将帮您记录一笔${type}`;
+    },
+    keyPointsGenerator: (args) => {
+      const points: string[] = [];
+      if (args.amount) {
+        const type = args.type === 'EXPENSE' ? '支出' : args.type === 'INCOME' ? '收入' : '';
+        points.push(`💰 ${type}金额：¥${Number(args.amount).toFixed(2)}`);
+      }
+      if (args.description) {
+        points.push(`📝 备注：${args.description}`);
+      }
+      if (args.categoryName) {
+        points.push(`📁 分类：${args.categoryName}`);
+      }
+      return points;
+    },
+  },
+  'transaction.update': {
+    title: '修改交易记录',
+    descriptionTemplate: () => 'AI 助手将修改您的一条交易记录',
+    keyPointsGenerator: (args) => {
+      const points: string[] = [];
+      if (args.amount) points.push(`💰 金额改为：¥${Number(args.amount).toFixed(2)}`);
+      if (args.description) points.push(`📝 备注改为：${args.description}`);
+      return points.length > 0 ? points : ['将更新交易的相关信息'];
+    },
+    impactTemplate: () => '原有记录将被覆盖',
+  },
+  'transaction.delete': {
+    title: '删除交易记录',
+    descriptionTemplate: () => '确定要删除这条交易记录吗？',
+    keyPointsGenerator: (args) => {
+      return ['🗑️ 记录删除后无法恢复'];
+    },
+    impactTemplate: () => '此操作不可撤销',
+  },
+  'transaction.batch_create': {
+    title: '批量记账',
+    descriptionTemplate: (args) => {
+      const items = args.items as any[];
+      const count = items?.length || 0;
+      return `AI 助手将一次性记录 ${count} 笔账目`;
+    },
+    keyPointsGenerator: (args) => {
+      const items = args.items as any[];
+      if (!items || items.length === 0) return ['无记录'];
+      
+      const totalAmount = items.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+      const points = [
+        `📊 共 ${items.length} 笔记录`,
+        `💰 总金额：¥${totalAmount.toFixed(2)}`,
+      ];
+      
+      // 显示前两条的描述
+      if (items.length > 0 && items[0].description) {
+        points.push(`📝 包括：${items[0].description}${items.length > 1 ? ' 等' : ''}`);
+      }
+      return points;
+    },
+    impactTemplate: (args) => {
+      const items = args.items as any[];
+      return `将在您的账本中添加 ${items?.length || 0} 条新记录`;
+    },
+  },
+  // 分类操作
+  'category.create': {
+    title: '新建分类',
+    descriptionTemplate: (args) => `创建一个新的${args.type === 'EXPENSE' ? '支出' : '收入'}分类`,
+    keyPointsGenerator: (args) => {
+      const points: string[] = [];
+      if (args.name) points.push(`📁 分类名称：${args.name}`);
+      if (args.icon) points.push(`🎨 图标：${args.icon}`);
+      return points;
+    },
+  },
+  // 支付方式
+  'payment_method.create': {
+    title: '添加支付方式',
+    descriptionTemplate: () => '添加一种新的支付方式',
+    keyPointsGenerator: (args) => {
+      const points: string[] = [];
+      if (args.name) points.push(`💳 名称：${args.name}`);
+      return points;
+    },
+  },
+  // 通用删除
+  'delete_transaction': {
+    title: '删除交易记录',
+    descriptionTemplate: () => '确定要删除这条交易记录吗？',
+    keyPointsGenerator: () => ['🗑️ 记录删除后无法恢复'],
+    impactTemplate: () => '此操作不可撤销',
+  },
+  'batch_delete_transactions': {
+    title: '批量删除',
+    descriptionTemplate: (args) => {
+      const ids = args.ids as any[];
+      return `确定要删除 ${ids?.length || 0} 条交易记录吗？`;
+    },
+    keyPointsGenerator: (args) => {
+      const ids = args.ids as any[];
+      return [
+        `🗑️ 将删除 ${ids?.length || 0} 条记录`,
+        '⚠️ 删除后无法恢复',
+      ];
+    },
+    impactTemplate: () => '此操作不可撤销，请谨慎确认',
+  },
+};
+
+/**
+ * 生成用户友好的确认信息
+ */
+function generateUserFriendlyConfirmation(
+  toolName: string,
+  toolArgs: Record<string, unknown>,
+  permission: ToolPermission
+): UserFriendlyConfirmation {
+  // 确定使用的 key（支持 action 子操作）
+  const action = toolArgs?.action as string | undefined;
+  const lookupKey = action ? `${toolName}.${action}` : toolName;
+  
+  const descriptor = userFriendlyDescriptions[lookupKey] || userFriendlyDescriptions[toolName];
+  
+  if (descriptor) {
+    return {
+      title: descriptor.title,
+      description: descriptor.descriptionTemplate(toolArgs),
+      keyPoints: descriptor.keyPointsGenerator(toolArgs),
+      impact: descriptor.impactTemplate?.(toolArgs),
+    };
+  }
+  
+  // 默认生成（回退方案）
+  return generateDefaultUserFriendly(toolName, toolArgs, permission);
+}
+
+/**
+ * 默认的用户友好信息生成器
+ */
+function generateDefaultUserFriendly(
+  toolName: string,
+  toolArgs: Record<string, unknown>,
+  permission: ToolPermission
+): UserFriendlyConfirmation {
+  const action = toolArgs?.action as string | undefined;
+  
+  // 根据操作类型生成标题
+  let title = '确认操作';
+  let description = permission.description;
+  
+  switch (permission.operationType) {
+    case 'read':
+      title = '查询数据';
+      break;
+    case 'write':
+      title = action === 'create' ? '新增记录' : action === 'update' ? '修改记录' : '保存数据';
+      break;
+    case 'delete':
+      title = '删除数据';
+      description = '此操作将删除相关数据';
+      break;
+    case 'admin':
+      title = '管理操作';
+      break;
+  }
+  
+  // 生成通用的关键点
+  const keyPoints: string[] = [];
+  if (toolArgs) {
+    if (toolArgs.amount) {
+      keyPoints.push(`💰 金额：¥${Number(toolArgs.amount).toFixed(2)}`);
+    }
+    if (toolArgs.description && typeof toolArgs.description === 'string') {
+      keyPoints.push(`📝 ${toolArgs.description}`);
+    }
+  }
+  
+  if (keyPoints.length === 0) {
+    keyPoints.push(`执行 ${permission.description}`);
+  }
+  
+  // 根据风险级别添加影响说明
+  let impact: string | undefined;
+  if (permission.riskLevel === 'critical') {
+    impact = '⚠️ 这是一个高风险操作，执行后无法撤销';
+  } else if (permission.riskLevel === 'high') {
+    impact = '请确认操作内容正确';
+  }
+  
+  return {
+    title,
+    description,
+    keyPoints,
+    impact,
+  };
+}
+
+/**
  * 创建确认请求
  */
 export function createConfirmationRequest(
@@ -479,27 +726,41 @@ export function createConfirmationRequest(
 ): ConfirmationRequest {
   const permission = getToolPermission(toolName);
   
-  const details: string[] = [];
-  
-  // 根据工具类型生成详情
+  // 生成格式化的技术参数详情
+  const formattedArgs: string[] = [];
   if (toolArgs) {
     for (const [key, value] of Object.entries(toolArgs)) {
       if (value !== undefined && value !== null) {
-        details.push(`${formatArgName(key)}: ${formatArgValue(value)}`);
+        formattedArgs.push(`${formatArgName(key)}: ${formatArgValue(value)}`);
       }
     }
   }
+
+  // 生成用户友好的确认信息
+  const userFriendly = generateUserFriendlyConfirmation(toolName, toolArgs, permission);
+  
+  // 构建技术详情
+  const technicalDetails: TechnicalDetails = {
+    toolName,
+    action: toolArgs?.action as string | undefined,
+    rawArgs: toolArgs,
+    formattedArgs,
+  };
 
   return {
     id: `confirm_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
     toolName,
     toolArgs,
     riskLevel: permission.riskLevel,
-    message: permission.confirmationMessage || `确认执行 ${permission.description}？`,
-    details,
+    // 保留旧字段以保持向后兼容
+    message: userFriendly.description,
+    details: formattedArgs,
     timestamp: Date.now(),
     expiresAt: Date.now() + 5 * 60 * 1000,  // 5分钟过期
     callback: callbacks,
+    // 新增字段
+    userFriendly,
+    technicalDetails,
   };
 }
 
@@ -544,28 +805,43 @@ function formatArgValue(value: unknown): string {
 
 // ============ 始终允许管理 ============
 
-/**
- * 用户已设置为"始终允许"的工具集合
- * 这些工具将跳过确认弹窗
- */
-const alwaysAllowedTools: Set<string> = new Set();
+import {
+  toolPermissionStorage,
+  setToolAlwaysAllowedPersisted,
+  removeToolAlwaysAllowedPersisted,
+  isToolAlwaysAllowedPersisted,
+  getAllAlwaysAllowedToolsPersisted,
+  resetAllAlwaysAllowedPersisted,
+} from '../../services/toolPermissionStorage';
 
 /**
- * 设置工具为"始终允许"
- * @param toolName 工具名称
+ * 初始化工具权限（需要在 App 启动时调用）
  */
-export function setToolAlwaysAllowed(toolName: string): void {
-  alwaysAllowedTools.add(toolName);
-  console.log(`✅ [Permissions] Tool "${toolName}" set to always allowed`);
+export async function initializeToolPermissions(): Promise<void> {
+  await toolPermissionStorage.initialize();
+  console.log('✅ [Permissions] Tool permissions initialized from storage');
 }
 
 /**
- * 移除工具的"始终允许"设置
+ * 设置工具为"始终允许"（持久化）
+ * @param toolName 工具名称
+ */
+export function setToolAlwaysAllowed(toolName: string): void {
+  // 异步持久化，但不等待（保持同步接口兼容）
+  setToolAlwaysAllowedPersisted(toolName).catch(err => {
+    console.error('❌ [Permissions] Failed to persist always allowed:', err);
+  });
+}
+
+/**
+ * 移除工具的"始终允许"设置（持久化）
  * @param toolName 工具名称
  */
 export function removeToolAlwaysAllowed(toolName: string): void {
-  alwaysAllowedTools.delete(toolName);
-  console.log(`🔄 [Permissions] Tool "${toolName}" removed from always allowed`);
+  // 异步持久化，但不等待（保持同步接口兼容）
+  removeToolAlwaysAllowedPersisted(toolName).catch(err => {
+    console.error('❌ [Permissions] Failed to persist removal:', err);
+  });
 }
 
 /**
@@ -573,22 +849,24 @@ export function removeToolAlwaysAllowed(toolName: string): void {
  * @param toolName 工具名称
  */
 export function isToolAlwaysAllowed(toolName: string): boolean {
-  return alwaysAllowedTools.has(toolName);
+  return isToolAlwaysAllowedPersisted(toolName);
 }
 
 /**
  * 获取所有"始终允许"的工具名称
  */
 export function getAllAlwaysAllowedTools(): string[] {
-  return Array.from(alwaysAllowedTools);
+  return getAllAlwaysAllowedToolsPersisted();
 }
 
 /**
- * 重置所有"始终允许"设置
+ * 重置所有"始终允许"设置（持久化）
  */
 export function resetAllAlwaysAllowed(): void {
-  alwaysAllowedTools.clear();
-  console.log('🔄 [Permissions] All always allowed settings cleared');
+  // 异步持久化，但不等待（保持同步接口兼容）
+  resetAllAlwaysAllowedPersisted().catch(err => {
+    console.error('❌ [Permissions] Failed to persist reset:', err);
+  });
 }
 
 // ============ 调用频率限制 ============

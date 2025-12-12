@@ -10,6 +10,7 @@ import { z } from "zod";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { API_BASE_URL } from "../../api/config";
 import { fetchWithTimeout, TIMEOUT_CONFIG } from "../utils";
+import { appEventEmitter, AppEvents } from "../../utils/eventEmitter";
 
 /**
  * 获取认证Token的辅助函数
@@ -31,7 +32,6 @@ export const updateTransactionTool = new DynamicStructuredTool({
   description: "修改已有的交易记录。只需要提供需要修改的字段，未提供的字段保持不变。",
   schema: z.object({
     id: z.number().describe("要修改的交易ID"),
-    name: z.string().optional().describe("新的交易名称"),
     description: z.string().optional().describe("新的交易描述"),
     amount: z.number().optional().describe("新的交易金额"),
     type: z.enum(["INCOME", "EXPENSE"]).optional().describe("新的交易类型"),
@@ -61,7 +61,6 @@ export const updateTransactionTool = new DynamicStructuredTool({
           message: "交易修改成功",
           transaction: {
             id: tx.id,
-            name: tx.name,
             description: tx.description,
             amount: tx.amount,
             type: tx.type,
@@ -146,8 +145,7 @@ export const batchCreateTransactionsTool = new DynamicStructuredTool({
   schema: z.object({
     ledgerId: z.number().describe("账本ID"),
     transactions: z.array(z.object({
-      name: z.string().describe("交易名称"),
-      description: z.string().optional().describe("交易描述"),
+      description: z.string().describe("交易描述"),
       amount: z.number().describe("交易金额"),
       type: z.enum(["INCOME", "EXPENSE"]).describe("交易类型"),
       categoryId: z.number().optional().describe("分类ID"),
@@ -181,7 +179,7 @@ export const batchCreateTransactionsTool = new DynamicStructuredTool({
           },
           successItems: result.successItems?.map((tx: any) => ({
             id: tx.id,
-            name: tx.name,
+            description: tx.description,
             amount: tx.amount,
             type: tx.type,
           })),
@@ -344,7 +342,7 @@ export const createCategoryTool = new DynamicStructuredTool({
   description: "创建新的交易分类。当用户要记账但找不到合适的分类时，可以帮用户创建新分类。",
   schema: z.object({
     name: z.string().describe("分类名称，如'健身房'、'宠物'等"),
-    icon: z.string().optional().describe("分类图标（emoji 或 ionicons 名称）"),
+    icon: z.string().optional().describe("分类图标（emoji 或 ionicons 名称如：ionicons:chatbubble、ionicons:wallet、ionicons:gift等）"),
     type: z.enum(["INCOME", "EXPENSE"]).describe("分类类型：INCOME收入 或 EXPENSE支出"),
     ledgerId: z.number().optional().describe("所属账本ID（可选）"),
   }),
@@ -365,6 +363,11 @@ export const createCategoryTool = new DynamicStructuredTool({
 
       if (data.code === 200 && data.data) {
         const cat = data.data;
+        
+        // 发送分类变更事件，通知 CategoryContext 刷新
+        appEventEmitter.emit(AppEvents.CATEGORY_CHANGED);
+        console.log('[createCategoryTool] 分类创建成功，已发送刷新事件');
+        
         return JSON.stringify({
           success: true,
           message: `分类"${cat.name}"创建成功`,

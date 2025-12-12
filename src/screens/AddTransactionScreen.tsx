@@ -279,16 +279,16 @@ export const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({ rout
 
   // ========== 事件处理 ==========
 
-  // 处理支付方式选择点击
+  // 处理账户选择点击
   const handlePaymentMethodClick = () => {
-    // 检查是否有支付方式
+    // 检查是否有账户
     if (paymentMethods.length === 0) {
       showConfirm(
-        '暂无支付方式',
-        '您还没有添加支付方式，是否前往设置？',
+        '暂无账户',
+        '您还没有添加收付账户，是否前往设置？',
         () => {
-          // 确认：先关闭当前页面，再导航到支付方式管理页面
-          console.log('准备导航到支付方式管理页面');
+          // 确认：先关闭当前页面，再导航到账户管理页面
+          console.log('准备导航到账户管理页面');
           
           // 先关闭当前 modal
           navigation.goBack();
@@ -311,7 +311,7 @@ export const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({ rout
       );
       return;
     }
-    // 有支付方式：打开选择器
+    // 有账户：打开选择器
     setShowPaymentMethodPicker(true);
   };
 
@@ -615,19 +615,8 @@ export const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({ rout
         {!isEditMode && <View style={styles.headerPlaceholder} />}
       </View>
 
-      <KeyboardAvoidingView
-        style={styles.keyboardAvoidingView}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
-      >
-        <ScrollView 
-          style={styles.scrollView}
-          contentContainerStyle={styles.contentContainer}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-        {/* ========== 区域1: 金额 & 收支类型 ========== */}
-        <View style={styles.amountSection}>
+      {/* ========== 区域1: 金额 & 收支类型（固定在顶部） ========== */}
+      <View style={styles.amountSection}>
           {/* 收支切换 */}
           <View style={styles.typeSelector}>
             <TouchableOpacity
@@ -724,7 +713,19 @@ export const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({ rout
           </View>
         </View>
 
-        {/* ========== 区域2: 详情列表 ========== */}
+        {/* ========== 区域2: 详情列表（可滚动） ========== */}
+        <KeyboardAvoidingView
+          style={styles.keyboardAvoidingView}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+        >
+        <ScrollView 
+          style={styles.scrollView}
+          contentContainerStyle={styles.contentContainer}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+        {/* ========== 详情列表 ========== */}
         <View style={styles.detailsSection}>
           {/* 分类 */}
           <TouchableOpacity
@@ -823,7 +824,7 @@ export const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({ rout
             </View>
           </TouchableOpacity>
 
-          {/* 支付方式 */}
+          {/* 账户 */}
           <TouchableOpacity
             style={styles.detailRow}
             onPress={handlePaymentMethodClick}
@@ -839,7 +840,7 @@ export const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({ rout
               ) : (
                 <Icon name="card" size={22} color={Colors.primary} style={{width: 24, textAlign: 'center'}} />
               )}
-              <Text style={styles.detailLabel}>支付方式</Text>
+              <Text style={styles.detailLabel}>账户</Text>
             </View>
             <View style={styles.detailRowRight}>
               <Text style={[
@@ -888,8 +889,17 @@ export const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({ rout
             />
           </CollapsibleSection>
         </View>
+      </ScrollView>
+      </KeyboardAvoidingView>
 
-        {/* ========== 区域3: 数字键盘 ========== */}
+      {/* ========== 底部固定区域：数字键盘 + 保存按钮 ========== */}
+      <View
+        style={[
+          styles.bottomFixedArea,
+          { paddingBottom: Math.max(insets.bottom, Spacing.sm) },
+        ]}
+      >
+        {/* 数字键盘 */}
         <View style={styles.keypadSection}>
           <NumberKeypad
             onNumberPress={handleNumberPress}
@@ -898,15 +908,9 @@ export const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({ rout
             onEquals={handleEquals}
           />
         </View>
-      </ScrollView>
 
-      {/* ========== 底部保存按钮 ========== */}
-      <View
-        style={[
-          styles.bottomBar,
-          { paddingBottom: Math.max(insets.bottom, Spacing.md) },
-        ]}
-      >
+        {/* 保存按钮 */}
+        <View style={styles.saveButtonContainer}>
         <TouchableOpacity
           style={[
             styles.saveButton,
@@ -934,8 +938,8 @@ export const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({ rout
             </Text>
           )}
         </TouchableOpacity>
+        </View>
       </View>
-      </KeyboardAvoidingView>
 
       {/* ========== 分类选择器 Modal ========== */}
       <CategoryPicker
@@ -963,7 +967,7 @@ export const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({ rout
         currentDate={transactionDate}
       />
 
-      {/* ========== 支付方式选择器 Modal ========== */}
+      {/* ========== 账户选择器 Modal ========== */}
       <PaymentMethodPicker
         visible={showPaymentMethodPicker}
         paymentMethods={paymentMethods}
@@ -973,7 +977,7 @@ export const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({ rout
           setShowPaymentMethodPicker(false);
         }}
         onClose={() => setShowPaymentMethodPicker(false)}
-        title="选择支付方式"
+        title="选择账户"
       />
 
       {/* ========== 附件图库（仅用于全屏查看） ========== */}
@@ -1121,10 +1125,10 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
 
-  // ========== 金额区域 ==========
+  // ========== 金额区域（固定在顶部） ==========
   amountSection: {
     paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
+    paddingVertical: Spacing.sm,
     backgroundColor: Colors.backgroundSecondary,
   },
   typeSelector: {
@@ -1161,7 +1165,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: Spacing.xs,
-    minHeight: 80,
+    minHeight: 56,
   },
   amountDisplay: {
     alignItems: 'center',
@@ -1333,24 +1337,27 @@ const styles = StyleSheet.create({
 
   // ========== 键盘区域 ==========
   keypadSection: {
-    paddingHorizontal: Spacing.md,
     paddingTop: Spacing.xs,
   },
 
-  // ========== 底部栏 ==========
-  bottomBar: {
+  // ========== 底部固定区域 ==========
+  bottomFixedArea: {
     backgroundColor: Colors.surface,
-    paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    paddingTop: Spacing.xs,
     borderTopWidth: 1,
     borderTopColor: Colors.border,
+    ...Shadows.lg,
+  },
+  saveButtonContainer: {
+    paddingTop: Spacing.xs,
   },
   saveButton: {
-    paddingVertical: Spacing.md,
-    borderRadius: BorderRadius.lg,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.md,
     alignItems: 'center',
     justifyContent: 'center',
-    ...Shadows.md,
+    ...Shadows.sm,
   },
   saveButtonExpense: {
     backgroundColor: Colors.expense,

@@ -1,6 +1,6 @@
 /**
- * 支付方式管理页面
- * 管理用户的支付方式（查看、添加、编辑、删除、设置默认）
+ * 资金账户管理页面
+ * 管理用户的资金账户（查看、添加、编辑、删除、设置默认）
  * 参考分类管理页面设计
  */
 import React, { useState } from 'react';
@@ -62,7 +62,7 @@ export const PaymentMethodManagementScreen: React.FC = () => {
   // 保存支付方式
   const handleSave = async () => {
     if (!editName.trim()) {
-      toast.info('请输入支付方式名称');
+      toast.info('请输入账户名称');
       return;
     }
 
@@ -88,7 +88,7 @@ export const PaymentMethodManagementScreen: React.FC = () => {
       await refreshPaymentMethods();
       setShowEditModal(false);
     } catch (error) {
-      console.error('保存支付方式失败:', error);
+        console.error('保存账户失败:', error);
       toast.error('保存失败');
     } finally {
       setIsLoading(false);
@@ -98,13 +98,13 @@ export const PaymentMethodManagementScreen: React.FC = () => {
   // 删除支付方式
   const handleDelete = (method: PaymentMethod) => {
     if (method.isDefault) {
-      toast.info('默认支付方式不能删除');
+      toast.info('默认账户不能删除');
       return;
     }
 
     showConfirm(
       '确认删除',
-      `确定要删除支付方式"${method.name}"吗？`,
+      `确定要删除账户"${method.name}"吗？`,
       async () => {
         try {
           setIsLoading(true);
@@ -112,7 +112,7 @@ export const PaymentMethodManagementScreen: React.FC = () => {
           toast.success('删除成功');
           await refreshPaymentMethods();
         } catch (error) {
-          console.error('删除支付方式失败:', error);
+          console.error('删除账户失败:', error);
           toast.error('删除失败');
         } finally {
           setIsLoading(false);
@@ -145,7 +145,7 @@ export const PaymentMethodManagementScreen: React.FC = () => {
       toast.success('初始化成功');
       await refreshPaymentMethods();
     } catch (error: any) {
-      console.error('初始化默认支付方式失败:', error);
+      console.error('初始化默认账户失败:', error);
       const errorMsg = error.response?.data?.msg || '初始化失败';
       toast.error(errorMsg);
     } finally {
@@ -160,7 +160,7 @@ export const PaymentMethodManagementScreen: React.FC = () => {
         <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
           <Icon name="arrow-back" size={24} color={Colors.text} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>支付方式管理</Text>
+        <Text style={styles.headerTitle}>资金账户管理</Text>
         <TouchableOpacity
           style={styles.headerAddButton}
           onPress={() => handleEdit()}
@@ -178,14 +178,14 @@ export const PaymentMethodManagementScreen: React.FC = () => {
               size={64} 
               color={Colors.textLight}
             />
-            <Text style={styles.emptyText}>暂无支付方式</Text>
+            <Text style={styles.emptyText}>暂无账户</Text>
             <TouchableOpacity
               style={styles.initButton}
               onPress={handleInitDefaults}
               disabled={isLoading}
             >
               <Text style={styles.initButtonText}>
-                {isLoading ? '初始化中...' : '初始化默认支付方式'}
+                {isLoading ? '初始化中...' : '初始化默认账户'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -274,7 +274,7 @@ export const PaymentMethodManagementScreen: React.FC = () => {
               <Icon name="arrow-back" size={24} color={Colors.text} />
             </TouchableOpacity>
             <Text style={styles.editHeaderTitle}>
-              {editingMethod ? '编辑支付方式' : '新增支付方式'}
+              {editingMethod ? '编辑账户' : '新增账户'}
             </Text>
             <View style={styles.editHeaderRight} />
           </View>
@@ -290,7 +290,7 @@ export const PaymentMethodManagementScreen: React.FC = () => {
               <Text style={styles.formLabel}>名称 *</Text>
               <TextInput
                 style={styles.formInput}
-                placeholder="请输入支付方式名称"
+                placeholder="请输入账户名称"
                 placeholderTextColor={Colors.textLight}
                 value={editName}
                 onChangeText={setEditName}

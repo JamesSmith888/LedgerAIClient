@@ -15,6 +15,7 @@ import { View, Text, StyleSheet, Pressable, Image } from 'react-native';
 import Markdown from 'react-native-markdown-display';
 import { AgentMessage, EmbeddedContentType, Attachment } from '../../types/agent';
 import { Colors, Spacing, FontSizes, BorderRadius, FontWeights, Shadows } from '../../constants/theme';
+import { Icon } from '../common';
 import { 
   ToolCallDisplay, 
   ToolCallData,
@@ -23,6 +24,7 @@ import {
   StatisticsCardDisplay,
   ActionButtonsDisplay,
   PlanDisplay,
+  ResultMessageDisplay,
   // 增强组件
   DynamicCard,
   KeyValueListDisplay,
@@ -37,6 +39,8 @@ interface MessageBubbleProps {
   showTimestamp?: boolean;
   onTransactionPress?: (transaction: any) => void;
   onActionButtonPress?: (action: string, payload: any) => void;
+  /** 后续操作建议按钮点击回调 - 用于发送新消息 */
+  onSuggestedActionPress?: (message: string) => void;
   /** 长按消息回调 - 用于显示操作菜单 */
   onLongPress?: (message: AgentMessage) => void;
   /** 点击附件回调（用于全屏预览） */
@@ -54,51 +58,80 @@ const renderAttachments = (
   if (!attachments || attachments.length === 0) return null;
 
   const imageAttachments = attachments.filter(a => a.type === 'image');
+  const audioAttachments = attachments.filter(a => a.type === 'audio');
   
-  if (imageAttachments.length === 0) return null;
+  if (imageAttachments.length === 0 && audioAttachments.length === 0) return null;
 
-  // 单图布局
-  if (imageAttachments.length === 1) {
-    const attachment = imageAttachments[0];
-    return (
-      <Pressable
-        style={styles.singleImageContainer}
-        onPress={() => onPress?.(attachment)}
-      >
-        <Image
-          source={{ uri: attachment.uri }}
-          style={styles.singleImage}
-          resizeMode="cover"
-        />
-      </Pressable>
-    );
-  }
-
-  // 多图网格布局
   return (
-    <View style={styles.imageGrid}>
-      {imageAttachments.slice(0, 4).map((attachment, index) => (
-        <Pressable
-          key={attachment.id}
+    <View>
+      {/* 图片附件 */}
+      {imageAttachments.length > 0 && (
+        imageAttachments.length === 1 ? (
+          <Pressable
+            style={styles.singleImageContainer}
+            onPress={() => onPress?.(imageAttachments[0])}
+          >
+            <Image
+              source={{ uri: imageAttachments[0].uri }}
+              style={styles.singleImage}
+              resizeMode="cover"
+            />
+          </Pressable>
+        ) : (
+          <View style={styles.imageGrid}>
+            {imageAttachments.slice(0, 4).map((attachment, index) => (
+              <Pressable
+                key={attachment.id}
+                style={[
+                  styles.gridImageContainer,
+                  imageAttachments.length === 2 && styles.gridImageHalf,
+                  imageAttachments.length === 3 && index === 0 && styles.gridImageLarge,
+                ]}
+                onPress={() => onPress?.(attachment)}
+              >
+                <Image
+                  source={{ uri: attachment.uri }}
+                  style={styles.gridImage}
+                  resizeMode="cover"
+                />
+                {/* 显示更多图片数量 */}
+                {index === 3 && imageAttachments.length > 4 && (
+                  <View style={styles.moreOverlay}>
+                    <Text style={styles.moreText}>+{imageAttachments.length - 4}</Text>
+                  </View>
+                )}
+              </Pressable>
+            ))}
+          </View>
+        )
+      )}
+
+      {/* 音频附件 */}
+      {audioAttachments.map((attachment, index) => (
+        <View 
+          key={attachment.id || `audio-${index}`} 
           style={[
-            styles.gridImageContainer,
-            imageAttachments.length === 2 && styles.gridImageHalf,
-            imageAttachments.length === 3 && index === 0 && styles.gridImageLarge,
+            styles.audioAttachment,
+            isUser ? styles.userAudioAttachment : styles.assistantAudioAttachment,
+            imageAttachments.length > 0 && { marginTop: 8 }
           ]}
-          onPress={() => onPress?.(attachment)}
         >
-          <Image
-            source={{ uri: attachment.uri }}
-            style={styles.gridImage}
-            resizeMode="cover"
-          />
-          {/* 显示更多图片数量 */}
-          {index === 3 && imageAttachments.length > 4 && (
-            <View style={styles.moreOverlay}>
-              <Text style={styles.moreText}>+{imageAttachments.length - 4}</Text>
-            </View>
-          )}
-        </Pressable>
+          <View style={[styles.audioIconContainer, isUser ? styles.userAudioIcon : styles.assistantAudioIcon]}>
+            <Icon 
+              name="mic" 
+              size={16} 
+              color={isUser ? Colors.primary : Colors.textSecondary} 
+            />
+          </View>
+          <View style={styles.audioContent}>
+            <Text style={[styles.audioText, isUser ? styles.userText : styles.assistantText]}>
+              语音消息
+            </Text>
+            <Text style={[styles.audioDuration, isUser ? styles.userSubtext : styles.assistantSubtext]}>
+              点击播放
+            </Text>
+          </View>
+        </View>
       ))}
     </View>
   );
@@ -113,6 +146,7 @@ const renderEmbeddedContent = (
   handlers: {
     onTransactionPress?: (transaction: any) => void;
     onActionButtonPress?: (action: string, payload: any) => void;
+    onSuggestedActionPress?: (message: string) => void;
   }
 ): React.ReactNode => {
   switch (type) {
@@ -121,6 +155,7 @@ const renderEmbeddedContent = (
         <TransactionListDisplay
           data={data}
           onTransactionPress={handlers.onTransactionPress}
+          onSuggestedActionPress={handlers.onSuggestedActionPress}
         />
       );
     
@@ -131,6 +166,9 @@ const renderEmbeddedContent = (
           onPress={handlers.onTransactionPress}
         />
       );
+    
+    case 'result_message':
+      return <ResultMessageDisplay data={data} />;
     
     case 'statistics_card':
       return <StatisticsCardDisplay data={data} />;
@@ -293,6 +331,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   showTimestamp = true,
   onTransactionPress,
   onActionButtonPress,
+  onSuggestedActionPress,
   onLongPress,
   onAttachmentPress,
 }) => {
@@ -317,6 +356,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   const isThinking = message.type === 'thinking';
   const isEmbedded = message.type === 'embedded';
   const isPlan = message.type === 'plan';
+  const isReflection = message.type === 'reflection';
   const hasAttachments = message.metadata?.attachments && message.metadata.attachments.length > 0;
   const hasContent = message.content && message.content.trim().length > 0;
 
@@ -325,6 +365,50 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
     return (
       <View style={styles.systemContainer}>
         <Text style={styles.systemText}>{message.content}</Text>
+      </View>
+    );
+  }
+
+  // 反思消息 - ReAct 模式的思考过程展示
+  if (isReflection) {
+    const reflectionResult = message.metadata?.reflectionResult;
+    const progress = message.metadata?.progress || 0;
+    const nextAction = message.metadata?.nextAction || 'continue';
+    
+    // 获取行动图标
+    const getActionIcon = (action: string): string => {
+      const icons: Record<string, string> = {
+        'continue': '➡️',
+        'retry': '🔄',
+        'adjust_strategy': '🔧',
+        'ask_user': '❓',
+        'complete': '✅',
+        'abort': '🛑',
+      };
+      return icons[action] || '•';
+    };
+
+    return (
+      <View style={styles.reflectionContainer}>
+        <View style={styles.reflectionHeader}>
+          <Text style={styles.reflectionIcon}>💭</Text>
+          <Text style={styles.reflectionTitle}>反思</Text>
+          <View style={styles.reflectionProgress}>
+            <View style={[styles.reflectionProgressBar, { width: `${progress}%` }]} />
+          </View>
+          <Text style={styles.reflectionProgressText}>{progress}%</Text>
+        </View>
+        <Text style={styles.reflectionThought}>{message.content}</Text>
+        <View style={styles.reflectionFooter}>
+          <Text style={styles.reflectionAction}>
+            {getActionIcon(nextAction)} {nextAction === 'continue' ? '继续执行' : 
+              nextAction === 'complete' ? '任务完成' :
+              nextAction === 'retry' ? '重试' :
+              nextAction === 'adjust_strategy' ? '调整策略' :
+              nextAction === 'ask_user' ? '需要确认' :
+              nextAction === 'abort' ? '中止' : nextAction}
+          </Text>
+        </View>
       </View>
     );
   }
@@ -389,6 +473,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
             {renderEmbeddedContent(type, data, {
               onTransactionPress,
               onActionButtonPress,
+              onSuggestedActionPress,
             })}
           </View>
           
@@ -628,6 +713,72 @@ const styles = StyleSheet.create({
     opacity: 0.8,
   },
 
+  // 反思消息样式 - ReAct 模式（低调、不引人注目的样式）
+  reflectionContainer: {
+    marginHorizontal: Spacing.sm,
+    marginVertical: 2,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 6,
+    backgroundColor: '#F9FAFB', // 非常淡的灰色背景
+    borderRadius: BorderRadius.md,
+    borderLeftWidth: 2,
+    borderLeftColor: '#D1D5DB', // 淡灰色边框
+    opacity: 0.85,
+  },
+  reflectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 2,
+  },
+  reflectionIcon: {
+    fontSize: FontSizes.xs,
+    marginRight: 4,
+    opacity: 0.6,
+  },
+  reflectionTitle: {
+    fontSize: FontSizes.xs,
+    fontWeight: FontWeights.medium,
+    color: '#9CA3AF', // 淡灰色文字
+    marginRight: Spacing.xs,
+  },
+  reflectionProgress: {
+    flex: 1,
+    height: 2,
+    backgroundColor: '#E5E7EB',
+    borderRadius: 1,
+    overflow: 'hidden',
+    marginRight: 4,
+  },
+  reflectionProgressBar: {
+    height: '100%',
+    backgroundColor: '#9CA3AF',
+    borderRadius: 1,
+  },
+  reflectionProgressText: {
+    fontSize: 10,
+    color: '#9CA3AF',
+    fontWeight: FontWeights.regular,
+    minWidth: 24,
+    textAlign: 'right',
+  },
+  reflectionThought: {
+    fontSize: FontSizes.xs,
+    color: '#6B7280', // 中灰色
+    lineHeight: 16,
+    marginBottom: 2,
+    fontStyle: 'italic',
+  },
+  reflectionFooter: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
+  reflectionAction: {
+    fontSize: 10,
+    color: '#9CA3AF',
+    fontWeight: FontWeights.regular,
+    fontStyle: 'italic',
+  },
+
   // 嵌入式内容样式
   embeddedMessageContainer: {
     maxWidth: '98%', // 增加宽度，让嵌入内容有足够空间
@@ -714,5 +865,54 @@ const styles = StyleSheet.create({
     color: Colors.surface,
     fontSize: FontSizes.lg,
     fontWeight: FontWeights.bold,
+  },
+
+  // 音频附件样式
+  audioAttachment: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 10,
+    borderRadius: BorderRadius.lg,
+    minWidth: 160,
+  },
+  userAudioAttachment: {
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  assistantAudioAttachment: {
+    backgroundColor: Colors.backgroundSecondary,
+  },
+  audioIconContainer: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: Spacing.sm,
+  },
+  userAudioIcon: {
+    backgroundColor: Colors.surface,
+  },
+  assistantAudioIcon: {
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  audioContent: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  audioText: {
+    fontSize: FontSizes.md,
+    fontWeight: FontWeights.medium,
+    marginBottom: 2,
+  },
+  audioDuration: {
+    fontSize: 10,
+  },
+  userSubtext: {
+    color: 'rgba(255, 255, 255, 0.8)',
+  },
+  assistantSubtext: {
+    color: Colors.textSecondary,
   },
 });

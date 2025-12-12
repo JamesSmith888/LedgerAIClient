@@ -8,13 +8,15 @@
  * - 加载更多历史消息（预留）
  * - 嵌入式组件交互事件传递
  * - 消息分组（将 AI 的多轮回复合并显示）
+ * - 键盘弹出时自动滚动到底部
  */
 
-import React, { useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useEffect, useRef, useCallback, useMemo, useImperativeHandle, forwardRef } from 'react';
 import { FlatList, StyleSheet, View, ActivityIndicator } from 'react-native';
 import { AgentMessage, Attachment } from '../../types/agent';
 import { MessageBubble } from './MessageBubble';
 import { MessageGroup } from './MessageGroup';
+import { TypingIndicator } from './TypingIndicator';
 import { Colors, Spacing } from '../../constants/theme';
 
 /**
@@ -30,15 +32,26 @@ interface MessageGroupItem {
 interface MessageListProps {
   messages: AgentMessage[];
   isTyping?: boolean;
+  /** Agent 当前状态（用于显示不同的等待提示） */
+  agentState?: 'idle' | 'parsing' | 'planning' | 'executing' | 'reflecting';
   onLoadMore?: () => void;
   isLoadingMore?: boolean;
   // 嵌入式组件交互回调
   onTransactionPress?: (transaction: any) => void;
   onActionButtonPress?: (action: string, payload: any) => void;
+  /** 后续操作建议按钮点击回调 - 发送新消息 */
+  onSuggestedActionPress?: (message: string) => void;
   // 消息操作回调
   onMessageLongPress?: (message: AgentMessage) => void;
   // 附件点击回调
   onAttachmentPress?: (attachment: Attachment) => void;
+}
+
+/**
+ * MessageList 暴露的方法
+ */
+export interface MessageListHandle {
+  scrollToEnd: (animated?: boolean) => void;
 }
 
 /**
@@ -138,17 +151,26 @@ function groupMessages(messages: AgentMessage[]): MessageGroupItem[] {
   return groups;
 }
 
-export const MessageList: React.FC<MessageListProps> = ({
+export const MessageList = forwardRef<MessageListHandle, MessageListProps>(({
   messages,
   isTyping = false,
+  agentState = 'idle',
   onLoadMore,
   isLoadingMore = false,
   onTransactionPress,
   onActionButtonPress,
+  onSuggestedActionPress,
   onMessageLongPress,
   onAttachmentPress,
-}) => {
+}, ref) => {
   const flatListRef = useRef<FlatList>(null);
+
+  // 暴露 scrollToEnd 方法给父组件
+  useImperativeHandle(ref, () => ({
+    scrollToEnd: (animated = true) => {
+      flatListRef.current?.scrollToEnd({ animated });
+    },
+  }), []);
 
   // 将消息分组
   const groupedMessages = useMemo(() => groupMessages(messages), [messages]);
@@ -174,6 +196,7 @@ export const MessageList: React.FC<MessageListProps> = ({
           message={item.messages[0]}
           onTransactionPress={onTransactionPress}
           onActionButtonPress={onActionButtonPress}
+          onSuggestedActionPress={onSuggestedActionPress}
           onLongPress={onMessageLongPress}
           onAttachmentPress={onAttachmentPress}
         />
@@ -187,6 +210,7 @@ export const MessageList: React.FC<MessageListProps> = ({
           message={item.messages[0]}
           onTransactionPress={onTransactionPress}
           onActionButtonPress={onActionButtonPress}
+          onSuggestedActionPress={onSuggestedActionPress}
           onLongPress={onMessageLongPress}
           onAttachmentPress={onAttachmentPress}
         />
@@ -200,29 +224,18 @@ export const MessageList: React.FC<MessageListProps> = ({
         isUser={false}
         onTransactionPress={onTransactionPress}
         onActionButtonPress={onActionButtonPress}
+        onSuggestedActionPress={onSuggestedActionPress}
         onLongPress={onMessageLongPress}
         onAttachmentPress={onAttachmentPress}
       />
     );
-  }, [onTransactionPress, onActionButtonPress, onMessageLongPress, onAttachmentPress]);
+  }, [onTransactionPress, onActionButtonPress, onSuggestedActionPress, onMessageLongPress, onAttachmentPress]);
 
   /**
    * 渲染正在输入指示器
    */
   const renderTypingIndicator = () => {
-    if (!isTyping) return null;
-
-    return (
-      <View style={styles.typingContainer}>
-        <View style={styles.typingBubble}>
-          <View style={styles.typingDots}>
-            <View style={[styles.dot, styles.dot1]} />
-            <View style={[styles.dot, styles.dot2]} />
-            <View style={[styles.dot, styles.dot3]} />
-          </View>
-        </View>
-      </View>
-    );
+    return <TypingIndicator visible={isTyping} agentState={agentState} />;
   };
 
   /**
@@ -269,47 +282,12 @@ export const MessageList: React.FC<MessageListProps> = ({
       windowSize={10}
     />
   );
-};
+});
 
 const styles = StyleSheet.create({
   contentContainer: {
     paddingVertical: Spacing.md,
     flexGrow: 1,
-  },
-
-  // 正在输入指示器
-  typingContainer: {
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-  },
-  typingBubble: {
-    backgroundColor: Colors.surface,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: 20,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    alignSelf: 'flex-start',
-  },
-  typingDots: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: Colors.textSecondary,
-    marginHorizontal: 2,
-  },
-  dot1: {
-    opacity: 0.4,
-  },
-  dot2: {
-    opacity: 0.6,
-  },
-  dot3: {
-    opacity: 0.8,
   },
 
   // 底部间距

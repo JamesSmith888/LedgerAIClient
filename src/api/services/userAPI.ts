@@ -64,4 +64,16 @@ export const userAPI = {
     const response = await apiClient.get<number>('/user/default-ledger');
     return response.data;
   },
+
+  /**
+   * 上传用户头像
+   */
+  uploadAvatar: async (file: FormData): Promise<string> => {
+    const response = await apiClient.post<string>('/user/avatar', file, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  },
 };

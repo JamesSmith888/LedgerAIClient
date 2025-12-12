@@ -1,6 +1,6 @@
 /**
  * AI Agent 工具类型定义
- * 用于工具管理和动态启用/禁用
+ * 仅支持领域聚合模式（Domain Mode）
  */
 
 /**
@@ -10,6 +10,7 @@ export type ToolCategory =
   | 'context'      // 上下文工具（获取用户、账本等信息）
   | 'api'          // API 工具（查询分类、支付方式等）
   | 'transaction'  // 交易工具（创建、查询、统计等）
+  | 'memory'       // 记忆工具（学习用户偏好、查询记忆等）
   | 'render';      // 渲染工具（展示列表、卡片等）
 
 /**
@@ -25,6 +26,19 @@ export interface ToolMeta {
   isEnabled: boolean;     // 是否启用
   isCore: boolean;        // 是否核心工具（不可禁用）
   isAlwaysAllowed?: boolean; // 是否已设置为"始终允许"（跳过确认弹窗）
+  // 领域工具的子操作（用于展示和权限管理）
+  actions?: ToolAction[];
+}
+
+/**
+ * 工具操作（用于领域聚合工具）
+ */
+export interface ToolAction {
+  name: string;           // 操作名称（如 "create", "delete"）
+  displayName: string;    // 显示名称
+  description: string;    // 操作描述
+  riskLevel: 'low' | 'medium' | 'high' | 'critical';  // 风险级别
+  isAlwaysAllowed?: boolean; // 是否已授权
 }
 
 /**
@@ -60,6 +74,12 @@ export const TOOL_CATEGORIES: ToolCategoryMeta[] = [
     icon: '💰',
   },
   {
+    id: 'memory',
+    name: '智能记忆',
+    description: '学习用户偏好、查询记忆',
+    icon: '🧠',
+  },
+  {
     id: 'render',
     name: '渲染展示',
     description: '展示列表、卡片等可视化内容',
@@ -69,207 +89,88 @@ export const TOOL_CATEGORIES: ToolCategoryMeta[] = [
 
 /**
  * 所有可用工具的元信息
- * 按分类组织，便于 UI 展示
+ * 领域聚合模式：4 个聚合工具 + 4 个渲染工具
  */
 export const ALL_TOOLS_META: ToolMeta[] = [
-  // 上下文工具
+  // ============ 领域聚合工具 ============
   {
-    name: 'get_user_info',
-    displayName: '获取用户信息',
-    description: '获取当前登录用户的信息',
-    category: 'context',
-    icon: '👤',
-    isEnabled: true,
-    isCore: false,
-  },
-  {
-    name: 'get_current_ledger',
-    displayName: '获取当前账本',
-    description: '获取用户当前选中的账本信息',
-    category: 'context',
-    icon: '📒',
-    isEnabled: true,
-    isCore: false,
-  },
-  {
-    name: 'get_all_ledgers',
-    displayName: '获取所有账本',
-    description: '获取用户的所有账本列表',
-    category: 'context',
-    icon: '📚',
-    isEnabled: true,
-    isCore: false,
-  },
-  {
-    name: 'get_full_context',
-    displayName: '获取完整上下文',
-    description: '一次性获取所有上下文信息',
-    category: 'context',
-    icon: '📋',
-    isEnabled: true,
-    isCore: false,
-  },
-  
-  // API 工具
-  {
-    name: 'get_categories',
-    displayName: '获取分类列表',
-    description: '获取指定账本的所有交易分类',
-    category: 'api',
-    icon: '🏷️',
-    isEnabled: true,
-    isCore: false,
-  },
-  {
-    name: 'get_ledger_detail',
-    displayName: '获取账本详情',
-    description: '获取账本的详细信息',
-    category: 'api',
-    icon: '📖',
-    isEnabled: true,
-    isCore: false,
-  },
-  {
-    name: 'search_category',
-    displayName: '搜索分类',
-    description: '根据关键词模糊搜索分类',
-    category: 'api',
-    icon: '🔎',
-    isEnabled: true,
-    isCore: false,
-  },
-  {
-    name: 'get_payment_methods',
-    displayName: '获取支付方式',
-    description: '获取用户的所有支付方式',
-    category: 'api',
-    icon: '💳',
-    isEnabled: true,
-    isCore: false,
-  },
-  
-  // 交易工具
-  {
-    name: 'create_transaction',
-    displayName: '创建交易',
-    description: '创建一笔新的交易记录',
+    name: 'transaction',
+    displayName: '交易管理',
+    description: '统一交易操作：查询/创建/更新/删除/批量/统计',
     category: 'transaction',
-    icon: '➕',
-    isEnabled: true,
-    isCore: true, // 核心工具，不可禁用
-  },
-  {
-    name: 'update_transaction',
-    displayName: '修改交易',
-    description: '修改已有的交易记录',
-    category: 'transaction',
-    icon: '✏️',
-    isEnabled: true,
-    isCore: false,
-  },
-  {
-    name: 'delete_transaction',
-    displayName: '删除交易',
-    description: '删除交易记录（可恢复）',
-    category: 'transaction',
-    icon: '🗑️',
-    isEnabled: true,
-    isCore: false,
-  },
-  {
-    name: 'batch_create_transactions',
-    displayName: '批量创建交易',
-    description: '一次性创建多笔交易',
-    category: 'transaction',
-    icon: '📦',
-    isEnabled: true,
-    isCore: false,
-  },
-  {
-    name: 'query_transactions',
-    displayName: '查询交易',
-    description: '按条件查询交易记录',
-    category: 'transaction',
-    icon: '🔍',
+    icon: '💹',
     isEnabled: true,
     isCore: true,
+    actions: [
+      { name: 'query', displayName: '查询交易', description: '按条件查询交易列表', riskLevel: 'low' },
+      { name: 'get', displayName: '获取详情', description: '获取单条交易详情', riskLevel: 'low' },
+      { name: 'create', displayName: '创建交易', description: '创建新交易', riskLevel: 'medium' },
+      { name: 'update', displayName: '更新交易', description: '修改交易信息', riskLevel: 'medium' },
+      { name: 'delete', displayName: '删除交易', description: '删除交易记录', riskLevel: 'high' },
+      { name: 'batch_create', displayName: '批量创建', description: '一次创建多条交易', riskLevel: 'high' },
+      { name: 'statistics', displayName: '统计分析', description: '获取统计数据', riskLevel: 'low' },
+    ],
   },
   {
-    name: 'get_statistics',
-    displayName: '获取统计',
-    description: '获取每日交易统计数据',
-    category: 'transaction',
-    icon: '📊',
-    isEnabled: true,
-    isCore: false,
-  },
-  {
-    name: 'get_statistics_report',
-    displayName: '统计报表',
-    description: '获取详细统计报表，含分类占比分析',
-    category: 'transaction',
-    icon: '📈',
-    isEnabled: true,
-    isCore: false,
-  },
-  {
-    name: 'get_transaction_detail',
-    displayName: '获取交易详情',
-    description: '获取单条交易的完整详情',
-    category: 'transaction',
-    icon: '📄',
-    isEnabled: true,
-    isCore: false,
-  },
-  {
-    name: 'query_agent_transactions',
-    displayName: '高级查询',
-    description: '多条件筛选查询交易',
-    category: 'transaction',
-    icon: '🔬',
-    isEnabled: true,
-    isCore: false,
-  },
-  {
-    name: 'search_transactions',
-    displayName: '搜索交易',
-    description: '通过关键词搜索交易',
-    category: 'transaction',
-    icon: '🔎',
-    isEnabled: true,
-    isCore: false,
-  },
-  {
-    name: 'get_recent_transactions',
-    displayName: '最近交易',
-    description: '快速获取最近的交易记录',
-    category: 'transaction',
-    icon: '🕐',
-    isEnabled: true,
-    isCore: false,
-  },
-  
-  // API 管理工具
-  {
-    name: 'create_category',
-    displayName: '创建分类',
-    description: '创建新的交易分类',
+    name: 'category',
+    displayName: '分类管理',
+    description: '统一分类操作：查询/搜索/创建',
     category: 'api',
-    icon: '🏷️',
+    icon: '📂',
     isEnabled: true,
     isCore: false,
+    actions: [
+      { name: 'list', displayName: '获取列表', description: '获取所有分类', riskLevel: 'low' },
+      { name: 'search', displayName: '搜索分类', description: '搜索匹配的分类', riskLevel: 'low' },
+      { name: 'create', displayName: '创建分类', description: '创建新分类', riskLevel: 'medium' },
+    ],
   },
   {
-    name: 'create_payment_method',
-    displayName: '创建支付方式',
-    description: '创建新的支付方式',
+    name: 'payment_method',
+    displayName: '支付方式管理',
+    description: '统一支付方式操作：查询/创建',
     category: 'api',
-    icon: '💳',
+    icon: '💰',
     isEnabled: true,
     isCore: false,
+    actions: [
+      { name: 'list', displayName: '获取列表', description: '获取所有支付方式', riskLevel: 'low' },
+      { name: 'create', displayName: '创建支付方式', description: '创建新支付方式', riskLevel: 'medium' },
+    ],
   },
-  
-  // 渲染工具
+  {
+    name: 'context',
+    displayName: '上下文信息',
+    description: '获取完整/用户/账本等上下文信息',
+    category: 'context',
+    icon: '🔄',
+    isEnabled: true,
+    isCore: true,
+    actions: [
+      { name: 'full', displayName: '完整上下文', description: '获取所有上下文信息', riskLevel: 'low' },
+      { name: 'user', displayName: '用户信息', description: '获取当前用户', riskLevel: 'low' },
+      { name: 'ledger', displayName: '当前账本', description: '获取当前账本', riskLevel: 'low' },
+      { name: 'ledgers', displayName: '所有账本', description: '获取账本列表', riskLevel: 'low' },
+    ],
+  },
+
+  // ============ 记忆工具 ============
+  {
+    name: 'user_memory',
+    displayName: '用户偏好记忆',
+    description: '学习和查询用户的个性化偏好',
+    category: 'memory',
+    icon: '🧠',
+    isEnabled: true,
+    isCore: false,
+    actions: [
+      { name: 'learn', displayName: '学习偏好', description: '记录用户的纠正和偏好', riskLevel: 'low' },
+      { name: 'query', displayName: '查询偏好', description: '查询已保存的偏好', riskLevel: 'low' },
+      { name: 'list', displayName: '列出偏好', description: '列出所有偏好记录', riskLevel: 'low' },
+    ],
+  },
+
+  // ============ 渲染工具 ============
   {
     name: 'render_transaction_list',
     displayName: '渲染交易列表',
@@ -289,6 +190,15 @@ export const ALL_TOOLS_META: ToolMeta[] = [
     isCore: true,
   },
   {
+    name: 'render_result_message',
+    displayName: '渲染结果消息',
+    description: '展示操作成功/失败等简洁反馈消息',
+    category: 'render',
+    icon: '✅',
+    isEnabled: true,
+    isCore: true,  // 核心工具，不可禁用 - 最常用的反馈工具
+  },
+  {
     name: 'render_statistics_card',
     displayName: '渲染统计卡片',
     description: '渲染统计汇总卡片',
@@ -306,43 +216,61 @@ export const ALL_TOOLS_META: ToolMeta[] = [
     isEnabled: true,
     isCore: false,
   },
-  
-  // ============ 领域聚合工具 ============
+
+  // ============ 增强渲染工具 ============
   {
-    name: 'transaction',
-    displayName: '交易管理',
-    description: '统一交易操作：查询/创建/更新/删除/批量/统计',
-    category: 'transaction',
-    icon: '💹',
-    isEnabled: true,
-    isCore: true,
-  },
-  {
-    name: 'category',
-    displayName: '分类管理',
-    description: '统一分类操作：查询/搜索/创建',
-    category: 'api',
-    icon: '📂',
+    name: 'render_dynamic_card',
+    displayName: '渲染动态卡片',
+    description: '灵活组合各种元素构建自定义卡片',
+    category: 'render',
+    icon: '🃏',
     isEnabled: true,
     isCore: false,
   },
   {
-    name: 'payment_method',
-    displayName: '支付方式管理',
-    description: '统一支付方式操作：查询/创建',
-    category: 'api',
-    icon: '💰',
+    name: 'render_key_value_list',
+    displayName: '渲染键值对列表',
+    description: '展示详情信息、配置项等',
+    category: 'render',
+    icon: '📝',
     isEnabled: true,
     isCore: false,
   },
   {
-    name: 'context',
-    displayName: '上下文信息',
-    description: '获取完整/用户/账本等上下文信息',
-    category: 'context',
-    icon: '🔄',
+    name: 'render_progress_card',
+    displayName: '渲染进度卡片',
+    description: '展示预算使用情况、目标达成进度',
+    category: 'render',
+    icon: '📊',
     isEnabled: true,
-    isCore: true,
+    isCore: false,
+  },
+  {
+    name: 'render_comparison_card',
+    displayName: '渲染对比卡片',
+    description: '展示两个时期/项目的数据对比',
+    category: 'render',
+    icon: '⚖️',
+    isEnabled: true,
+    isCore: false,
+  },
+  {
+    name: 'render_pie_chart',
+    displayName: '渲染饼图',
+    description: '展示分类占比、收支结构分布',
+    category: 'render',
+    icon: '🥧',
+    isEnabled: true,
+    isCore: false,
+  },
+  {
+    name: 'render_bar_chart',
+    displayName: '渲染柱状图',
+    description: '展示时间趋势或分类对比',
+    category: 'render',
+    icon: '📶',
+    isEnabled: true,
+    isCore: false,
   },
 ];
 
@@ -361,6 +289,7 @@ export function groupToolsByCategory(tools: ToolMeta[]): Record<ToolCategory, To
     context: [],
     api: [],
     transaction: [],
+    memory: [],
     render: [],
   };
   
@@ -369,4 +298,12 @@ export function groupToolsByCategory(tools: ToolMeta[]): Record<ToolCategory, To
   }
   
   return result;
+}
+
+/**
+ * 获取领域工具的操作列表
+ */
+export function getToolActions(toolName: string): ToolAction[] {
+  const tool = ALL_TOOLS_META.find(t => t.name === toolName);
+  return tool?.actions || [];
 }

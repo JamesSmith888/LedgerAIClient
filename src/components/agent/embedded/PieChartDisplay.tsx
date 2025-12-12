@@ -11,6 +11,36 @@ import Svg, { Path, Circle, G, Text as SvgText } from 'react-native-svg';
 import { Icon } from '../../common';
 import { Colors, Spacing, FontSizes, FontWeights, BorderRadius, Shadows } from '../../../constants/theme';
 
+/**
+ * 判断是否为 ionicons 图标格式
+ * 格式: "ionicons:icon-name" 或纯 emoji
+ */
+const isIonIcon = (icon?: string): boolean => {
+  if (!icon) return false;
+  return icon.startsWith('ionicons:');
+};
+
+/**
+ * 提取 ionicons 图标名称
+ */
+const getIconName = (icon: string): string => {
+  return icon.replace('ionicons:', '');
+};
+
+/**
+ * 渲染图标（支持 emoji 和 ionicons）
+ */
+const renderIcon = (icon?: string, size: number = 14, color: string = Colors.textSecondary) => {
+  if (!icon) return null;
+  
+  if (isIonIcon(icon)) {
+    return <Icon name={getIconName(icon)} size={size} color={color} />;
+  }
+  
+  // 纯 emoji 或其他文本
+  return <Text style={{ fontSize: size, marginRight: 2 }}>{icon}</Text>;
+};
+
 export interface PieChartItem {
   label: string;
   value: number;
@@ -221,9 +251,12 @@ export const PieChartDisplay: React.FC<PieChartDisplayProps> = ({
               <View key={index} style={styles.legendItem}>
                 <View style={[styles.legendDot, { backgroundColor: item.color }]} />
                 <View style={styles.legendContent}>
-                  <Text style={styles.legendLabel} numberOfLines={1}>
-                    {item.icon ? `${item.icon} ` : ''}{item.label}
-                  </Text>
+                  <View style={styles.legendLabelRow}>
+                    {renderIcon(item.icon, 14, item.color || Colors.textSecondary)}
+                    <Text style={styles.legendLabel} numberOfLines={1}>
+                      {item.label}
+                    </Text>
+                  </View>
                   <View style={styles.legendValues}>
                     {showValue && (
                       <Text style={styles.legendValue}>
@@ -322,9 +355,14 @@ const styles = StyleSheet.create({
   legendContent: {
     flex: 1,
   },
+  legendLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   legendLabel: {
     fontSize: FontSizes.xs,
     color: Colors.text,
+    marginLeft: 4,
   },
   legendValues: {
     flexDirection: 'row',

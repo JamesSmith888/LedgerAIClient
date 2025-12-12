@@ -43,6 +43,9 @@ export enum AgentState {
   /** 执行工具调用 */
   EXECUTING = 'executing',
   
+  /** 反思/评估当前进度（ReAct 模式） */
+  REFLECTING = 'reflecting',
+  
   /** 总结执行结果 */
   SUMMARIZING = 'summarizing',
   
@@ -333,10 +336,14 @@ export class AgentStateMachine {
   private canTransitionTo(targetState: AgentState): boolean {
     const validTransitions: Record<AgentState, AgentState[]> = {
       [AgentState.IDLE]: [AgentState.PARSING],
-      [AgentState.PARSING]: [AgentState.PLANNING, AgentState.ERROR, AgentState.CANCELLED],
+      // PARSING 可以跳过 PLANNING 直接到 EXECUTING（简单任务），也可以进入 PLANNING（复杂任务）
+      [AgentState.PARSING]: [AgentState.PLANNING, AgentState.EXECUTING, AgentState.AWAITING_CONFIRMATION, AgentState.ERROR, AgentState.CANCELLED],
       [AgentState.PLANNING]: [AgentState.AWAITING_CONFIRMATION, AgentState.EXECUTING, AgentState.ERROR, AgentState.CANCELLED],
-      [AgentState.AWAITING_CONFIRMATION]: [AgentState.EXECUTING, AgentState.IDLE, AgentState.ERROR, AgentState.CANCELLED],
-      [AgentState.EXECUTING]: [AgentState.SUMMARIZING, AgentState.AWAITING_CONFIRMATION, AgentState.ERROR, AgentState.CANCELLED],
+      [AgentState.AWAITING_CONFIRMATION]: [AgentState.EXECUTING, AgentState.IDLE, AgentState.COMPLETED, AgentState.ERROR, AgentState.CANCELLED],
+      // EXECUTING 可以转换到 REFLECTING（反思模式）
+      [AgentState.EXECUTING]: [AgentState.SUMMARIZING, AgentState.REFLECTING, AgentState.AWAITING_CONFIRMATION, AgentState.ERROR, AgentState.CANCELLED],
+      // REFLECTING 可以继续执行、调整策略或完成
+      [AgentState.REFLECTING]: [AgentState.EXECUTING, AgentState.SUMMARIZING, AgentState.AWAITING_CONFIRMATION, AgentState.ERROR, AgentState.CANCELLED],
       [AgentState.SUMMARIZING]: [AgentState.COMPLETED, AgentState.ERROR, AgentState.CANCELLED],
       // 允许从终态直接开始新对话（无需手动重置到 IDLE）
       [AgentState.COMPLETED]: [AgentState.IDLE, AgentState.PARSING],
@@ -565,6 +572,7 @@ export const STATE_DISPLAY_NAMES: Record<AgentState, string> = {
   [AgentState.PLANNING]: '规划中...',
   [AgentState.AWAITING_CONFIRMATION]: '等待确认',
   [AgentState.EXECUTING]: '执行中...',
+  [AgentState.REFLECTING]: '反思中...',
   [AgentState.SUMMARIZING]: '整理结果...',
   [AgentState.COMPLETED]: '完成',
   [AgentState.ERROR]: '出错',
@@ -583,6 +591,8 @@ export function getStateColor(state: AgentState): string {
     case AgentState.EXECUTING:
     case AgentState.SUMMARIZING:
       return '#3B82F6'; // blue
+    case AgentState.REFLECTING:
+      return '#8B5CF6'; // purple - 反思用紫色区分
     case AgentState.AWAITING_CONFIRMATION:
       return '#F59E0B'; // amber
     case AgentState.COMPLETED:

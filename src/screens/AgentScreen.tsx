@@ -10,12 +10,11 @@
  * 5. 成熟的产品级功能（对话管理、消息操作、智能建议等）
  */
 
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   TouchableOpacity,
   Alert,
   ActivityIndicator,
@@ -24,16 +23,21 @@ import {
   TextInput,
   Platform,
   StatusBar,
-  KeyboardAvoidingView,
+  Image,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { KeyboardAvoidingView, useKeyboardHandler } from 'react-native-keyboard-controller';
+import Animated, { useSharedValue, useAnimatedStyle, withTiming } from 'react-native-reanimated';
+import { launchImageLibrary } from 'react-native-image-picker';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import { useLedger } from '../context/LedgerContext';
 import { useStatefulAgentChat } from '../hooks/useStatefulAgentChat';
+import { useAgentBackground } from '../hooks/useAgentBackground';
 import { AgentState, ConfirmationRequest } from '../agent/statefulAgent';
 import { useConversations } from '../hooks/useConversations';
 import { useToolManager } from '../hooks/useToolManager';
-import { MessageList, InputBar, MessageActionSheet, handleBuiltInAction, ImageViewer, ToolManagerPanel, ToolButton } from '../components/agent';
+import { MessageList, InputBar, MessageActionSheet, handleBuiltInAction, ImageViewer, ToolManagerPanel, ConfirmationDialog, MessageListHandle, AgentHeaderMenu, AgentMenuAction, APIKeyGuide, SuggestedActionsBar, SuggestionSettingsModal, InputBarHandle } from '../components/agent';
 import { updateAgentContext } from '../agent/tools/contextTools';
 import { Icon } from '../components/common';
 import { Colors, Spacing, FontSizes, FontWeights, BorderRadius, Shadows } from '../constants/theme';
@@ -41,6 +45,9 @@ import { Conversation, MessageAction, AgentMessage, PendingAttachment, Attachmen
 import { categoryAPI, CategoryResponse } from '../api/services/categoryAPI';
 import { paymentMethodAPI } from '../api/services/paymentMethodAPI';
 import { PaymentMethod } from '../types/paymentMethod';
+import { AI_PROVIDERS, apiKeyStorage } from '../services/apiKeyStorage';
+import { userPreferenceMemory } from '../services/userPreferenceMemory';
+import { completionService } from '../services/completionService';
 
 // WebSocket 配置
 const DEV_WS_URL = 'ws://localhost:8080/ws';
@@ -52,6 +59,7 @@ export const AgentScreen: React.FC = () => {
   const navigation = useNavigation<any>();
   const { token, user } = useAuth();
   const { currentLedger, defaultLedgerId, ledgers } = useLedger();
+  const insets = useSafeAreaInsets();
 
   // 检查用户权限 - 仅管理员可用
   const isAdmin = user?.role === 'ADMIN' || user?.username === 'admin';
@@ -72,13 +80,24 @@ export const AgentScreen: React.FC = () => {
   
   // 工具管理面板状态
   const [showToolManager, setShowToolManager] = useState(false);
+  // 更多菜单状态
+  const [showMenu, setShowMenu] = useState(false);
+  // AI 建议操作是否被用户关闭
+  const [suggestionsDismissed, setSuggestionsDismissed] = useState(false);
+  // 智能建议设置
+  const [showSuggestionSettings, setShowSuggestionSettings] = useState(false);
+  const [suggestionSettings, setSuggestionSettings] = useState({
+    enabled: false, // 默认关闭
+    maxCount: 3,
+  });
 
   // 分类和支付方式状态
   const [categories, setCategories] = useState<CategoryResponse[]>([]);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [isLoadingContext, setIsLoadingContext] = useState(true);
+  const [userPreferenceContext, setUserPreferenceContext] = useState<string>('');
 
-  // 获取分类和支付方式数据
+  // 获取分类、支付方式和用户偏好记忆数据
   useEffect(() => {
     const fetchContextData = async () => {
       if (!currentLedger?.id) {
@@ -90,8 +109,8 @@ export const AgentScreen: React.FC = () => {
       setIsLoadingContext(true);
       
       try {
-        // 并行获取分类和支付方式
-        const [categoriesData, paymentMethodsData] = await Promise.all([
+        // 并行获取分类、支付方式和用户偏好
+        const [categoriesData, paymentMethodsData, prefContext] = await Promise.all([
           categoryAPI.getAll().catch(err => {
             console.warn('⚠️ [AgentScreen] Failed to fetch categories:', err);
             return [];
@@ -100,13 +119,19 @@ export const AgentScreen: React.FC = () => {
             console.warn('⚠️ [AgentScreen] Failed to fetch payment methods:', err);
             return [];
           }),
+          userPreferenceMemory.generatePromptContext().catch(err => {
+            console.warn('⚠️ [AgentScreen] Failed to generate preference context:', err);
+            return '';
+          }),
         ]);
         
         setCategories(categoriesData);
         setPaymentMethods(paymentMethodsData);
+        setUserPreferenceContext(prefContext);
         console.log('✅ [AgentScreen] Context data loaded:', {
           categories: categoriesData.length,
           paymentMethods: paymentMethodsData.length,
+          hasPreferenceContext: prefContext.length > 0,
         });
       } catch (error) {
         console.error('❌ [AgentScreen] Failed to fetch context data:', error);
@@ -162,8 +187,10 @@ export const AgentScreen: React.FC = () => {
         hour: '2-digit',
         minute: '2-digit',
       }),
+      // 注入用户偏好记忆
+      userPreferenceContext: userPreferenceContext || undefined,
     };
-  }, [user, currentLedger, defaultLedgerId, ledgers, categories, paymentMethods]);
+  }, [user, currentLedger, defaultLedgerId, ledgers, categories, paymentMethods, userPreferenceContext]);
 
   // 使用对话管理 Hook（持久化存储）
   const {
@@ -174,26 +201,35 @@ export const AgentScreen: React.FC = () => {
     deleteConversation,
     renameConversation,
     switchConversation,
+    refreshConversations,
   } = useConversations();
 
   // 使用状态机驱动的 Agent Chat Hook
-  // 支持：Planning 模式、Human-in-the-Loop 确认、状态可视化
+  // 支持：Planning 模式、Human-in-the-Loop 确认、ReAct 反思模式、状态可视化
   const {
     messages,
     sendMessage,
     clearMessages,
     reconnect,
+    cancelChat,
     isConnected,
     isTyping,
     isInitialized,
     switchToConversation,
     // 状态机扩展功能
     agentState,
-    currentPlan,
+    currentIntent,
     pendingConfirmation,
     confirmOperation,
     rejectOperation,
     isAwaitingConfirmation,
+    // 反思模式扩展
+    lastReflection,
+    isReflecting,
+    // 模型信息
+    currentProvider,
+    currentModelName,
+    refreshModelInfo,
   } = useStatefulAgentChat({
     wsUrl: WS_URL,
     userId: user?._id,
@@ -204,8 +240,13 @@ export const AgentScreen: React.FC = () => {
     runtimeContext, // 传入运行时上下文，AI 可直接感知
     enabledToolNames, // 传入启用的工具列表
     // 状态机配置
-    enablePlanning: true, // 启用任务规划
+    enableIntentRewriting: true, // 启用意图改写（用户输入优化）
     enableConfirmation: true, // 启用危险操作确认
+    enableReflection: true, // 始终启用 ReAct 反思模式（深思模式）
+    reflectorConfig: {
+      frequency: 'every_step', // 每步反思
+      showThoughts: true, // 展示反思过程
+    },
     userPreferences: {
       confirmHighRisk: true, // 高风险操作需确认
       confirmMediumRisk: false, // 中等风险操作不需确认
@@ -237,27 +278,180 @@ export const AgentScreen: React.FC = () => {
     });
   }, [user, currentLedger, defaultLedgerId, ledgers, token]);
 
+  // 屏幕获得焦点时刷新模型信息和对话列表（从设置页面返回时）
+  useFocusEffect(
+    useCallback(() => {
+      refreshModelInfo();
+      // 刷新对话列表，以便显示自动生成的标题
+      refreshConversations();
+    }, [refreshModelInfo, refreshConversations])
+  );
+
+  // 定时刷新对话列表，以便及时显示自动生成的标题
+  // 只在 AI 正在输入时启用轮询
+  useEffect(() => {
+    if (!isTyping) {
+      return;
+    }
+
+    // AI 输入时每 3 秒刷新一次对话列表
+    const intervalId = setInterval(() => {
+      refreshConversations();
+    }, 3000);
+
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [isTyping, refreshConversations]);
+
+  // 消息列表 ref - 用于键盘弹出时滚动
+  const messageListRef = useRef<MessageListHandle>(null);
+  
+  // 输入框 ref - 用于外部控制（如清空输入）
+  const inputBarRef = useRef<InputBarHandle>(null);
+
+  // 键盘高度动画值
+  const keyboardHeight = useSharedValue(0);
+
+  // 使用 react-native-keyboard-controller 监听键盘事件
+  useKeyboardHandler({
+    onMove: (e) => {
+      'worklet';
+      keyboardHeight.value = e.height;
+    },
+    onEnd: (e) => {
+      'worklet';
+      keyboardHeight.value = e.height;
+    },
+  });
+
+  // 键盘弹出时滚动消息列表到底部
+  useEffect(() => {
+    // 当键盘高度变化且大于0时，滚动到底部
+    const unsubscribe = () => {
+      if (keyboardHeight.value > 0 && messages.length > 0) {
+        setTimeout(() => {
+          messageListRef.current?.scrollToEnd(true);
+        }, 100);
+      }
+    };
+    // 触发一次初始检查
+    return unsubscribe;
+  }, [messages.length]);
+
+  // 更新补全服务的对话上下文（用于智能补全时理解当前对话内容）
+  useEffect(() => {
+    if (messages.length === 0) {
+      completionService.clearConversationContext();
+      return;
+    }
+    
+    // 提取对话内容
+    const conversationContext = messages.map(msg => ({
+      role: msg.sender === 'user' ? 'user' as const : 'assistant' as const,
+      content: msg.content || '',
+    })).filter(m => m.content.length > 0);
+    
+    completionService.setConversationContext(conversationContext);
+  }, [messages]);
+
+  // API Key 配置状态
+  const [hasAPIKey, setHasAPIKey] = useState<boolean | null>(null); // null 表示正在检查
+  const [showAPIKeyGuide, setShowAPIKeyGuide] = useState(false);
+
+  // 背景图片管理
+  const { backgroundImage, setBackground, clearBackground } = useAgentBackground();
+
+  // 检查用户是否已配置 API Key
+  useEffect(() => {
+    const checkAPIKey = async () => {
+      try {
+        const hasKey = await apiKeyStorage.hasAnyAPIKey();
+        setHasAPIKey(hasKey);
+        
+        // 如果没有配置 API Key，显示引导
+        if (!hasKey) {
+          setShowAPIKeyGuide(true);
+        }
+        
+        console.log('🔑 [AgentScreen] API Key status:', hasKey ? '已配置' : '未配置');
+      } catch (error) {
+        console.error('❌ [AgentScreen] Failed to check API Key:', error);
+        setHasAPIKey(false);
+        setShowAPIKeyGuide(true);
+      }
+    };
+    
+    checkAPIKey();
+  }, []);
+
+  // 页面获得焦点时重新检查 API Key 状态（从设置页面返回后）
+  useFocusEffect(
+    useCallback(() => {
+      const recheckAPIKey = async () => {
+        const hasKey = await apiKeyStorage.hasAnyAPIKey();
+        setHasAPIKey(hasKey);
+        
+        // 如果已配置，关闭引导
+        if (hasKey && showAPIKeyGuide) {
+          setShowAPIKeyGuide(false);
+        }
+      };
+      
+      recheckAPIKey();
+    }, [showAPIKeyGuide])
+  );
+
   // UI 状态
-  const [showQuickActions, setShowQuickActions] = useState(true);
   const [showConversations, setShowConversations] = useState(false);
   const [showMessageActions, setShowMessageActions] = useState(false);
   const [selectedMessage, setSelectedMessage] = useState<AgentMessage | null>(null);
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null);
   const [newConversationTitle, setNewConversationTitle] = useState('');
   
+  // 初始建议（AI 推荐的快捷操作）- 不再使用预设，仅在 AI 对话后由反思生成
+  // 注意：初始建议功能已移除，统一使用 AI 对话后的 suggestedActions
+  
   // 图片预览状态
   const [showImageViewer, setShowImageViewer] = useState(false);
   const [previewImages, setPreviewImages] = useState<Attachment[]>([]);
   const [previewImageIndex, setPreviewImageIndex] = useState(0);
 
-  // 智能建议（固定3个最实用的快捷操作）
-  const smartSuggestions = useMemo(() => {
-    return [
-      { id: '1', text: '本月收支统计', icon: '📊' },
-      { id: '2', text: '记一笔支出', icon: '💸' },
-      { id: '3', text: '查看最近交易', icon: '📋' },
-    ];
-  }, []);
+  // 从最后一条 AI 消息中提取建议操作
+  // 支持两种来源：
+  // 1. 消息 metadata 中的 suggestedActions（AI 直接生成）
+  // 2. 嵌入内容 data 中的 suggestedActions（渲染工具返回）
+  const currentSuggestedActions = useMemo(() => {
+    // 如果功能未启用，直接返回空
+    if (!suggestionSettings.enabled) return [];
+
+    if (suggestionsDismissed || isTyping || agentState !== AgentState.IDLE) {
+      return [];
+    }
+    // 从后往前查找最后一条有建议的 AI 消息
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.sender === 'assistant') {
+        // 优先检查消息级别的 suggestedActions
+        if (msg.metadata?.suggestedActions?.length) {
+          return msg.metadata.suggestedActions.slice(0, suggestionSettings.maxCount);
+        }
+        // 其次检查嵌入内容中的 suggestedActions
+        if (msg.metadata?.embeddedContent?.data?.suggestedActions?.length) {
+          return msg.metadata.embeddedContent.data.suggestedActions.slice(0, suggestionSettings.maxCount);
+        }
+      }
+    }
+    return [];
+  }, [messages, suggestionsDismissed, isTyping, agentState, suggestionSettings]);
+
+  // 获取第一条建议作为自动填充内容
+  const topSuggestion = useMemo(() => {
+    if (currentSuggestedActions.length > 0) {
+      return currentSuggestedActions[0].message;
+    }
+    return undefined;
+  }, [currentSuggestedActions]);
 
   /**
    * 处理发送消息（支持附件）
@@ -268,6 +462,9 @@ export const AgentScreen: React.FC = () => {
    * 3. UI 显示时仅使用 URI，不保存 base64 到消息历史
    */
   const handleSend = useCallback((text: string, attachments?: PendingAttachment[]) => {
+    // 用户发送新消息时，重置建议栏的关闭状态
+    setSuggestionsDismissed(false);
+    
     if (attachments && attachments.length > 0) {
       console.log('📎 [AgentScreen] 发送带附件的消息:', attachments.length, '个附件');
       console.log('📎 [AgentScreen] 附件 base64 状态:', attachments.map(a => ({ 
@@ -281,8 +478,25 @@ export const AgentScreen: React.FC = () => {
     } else {
       sendMessage(text);
     }
-    setShowQuickActions(false);
   }, [sendMessage]);
+
+  /**
+   * 处理建议操作按钮点击
+   * 当用户点击AI推荐的后续操作按钮时，自动发送对应的消息
+   */
+  const handleSuggestedActionPress = useCallback((message: string) => {
+    console.log('🎯 [AgentScreen] 建议操作点击:', message);
+    // 点击建议后重置 dismissed 状态，这样新的回复可以继续显示建议
+    setSuggestionsDismissed(false);
+    sendMessage(message);
+  }, [sendMessage]);
+
+  /**
+   * 处理关闭建议栏
+   */
+  const handleDismissSuggestions = useCallback(() => {
+    setSuggestionsDismissed(true);
+  }, []);
 
   /**
    * 处理附件点击（全屏预览）
@@ -315,7 +529,10 @@ export const AgentScreen: React.FC = () => {
           style: 'destructive',
           onPress: () => {
             clearMessages();
-            setShowQuickActions(true);
+            // 清空后重置建议状态
+            setSuggestionsDismissed(false);
+            // 清空对话上下文
+            completionService.clearConversationContext();
           },
         },
       ]
@@ -337,7 +554,12 @@ export const AgentScreen: React.FC = () => {
       const newConv = await createConversation(`新对话 ${conversations.length + 1}`);
       await switchToConversation(newConv.id);
       setShowConversations(false);
-      setShowQuickActions(true);
+      // 新对话时重置建议状态，清除之前的 AI 推荐
+      setSuggestionsDismissed(false);
+      // 清空补全服务的对话上下文
+      completionService.clearConversationContext();
+      // 清空输入框
+      inputBarRef.current?.clear();
     } catch (error) {
       console.error('❌ [AgentScreen] Failed to create conversation:', error);
       Alert.alert('错误', '创建对话失败');
@@ -352,6 +574,10 @@ export const AgentScreen: React.FC = () => {
       await switchConversation(convId);
       await switchToConversation(convId);
       setShowConversations(false);
+      // 切换对话时重置建议状态
+      setSuggestionsDismissed(false);
+      // 清空输入框
+      inputBarRef.current?.clear();
     } catch (error) {
       console.error('❌ [AgentScreen] Failed to switch conversation:', error);
     }
@@ -403,6 +629,75 @@ export const AgentScreen: React.FC = () => {
   }, [currentConversationId, conversations, deleteConversation, switchToConversation]);
 
   /**
+   * 处理背景设置
+   */
+  const handleBackgroundSetting = useCallback(() => {
+    Alert.alert(
+      '聊天背景设置',
+      '请选择背景图片来源',
+      [
+        { text: '取消', style: 'cancel' },
+        {
+          text: '恢复默认',
+          style: 'destructive',
+          onPress: clearBackground,
+        },
+        {
+          text: '从相册选择',
+          onPress: async () => {
+            try {
+              const result = await launchImageLibrary({
+                mediaType: 'photo',
+                selectionLimit: 1,
+                quality: 0.8,
+              });
+              
+              if (result.assets && result.assets.length > 0 && result.assets[0].uri) {
+                setBackground(result.assets[0].uri);
+              }
+            } catch (error) {
+              console.error('Failed to pick image:', error);
+              Alert.alert('错误', '选择图片失败');
+            }
+          },
+        },
+      ]
+    );
+  }, [setBackground, clearBackground]);
+
+  /**
+   * 处理菜单操作
+   */
+  const handleMenuAction = useCallback((action: AgentMenuAction) => {
+    switch (action) {
+      case 'new_chat':
+        handleNewConversation();
+        break;
+      case 'tools':
+        setShowToolManager(true);
+        break;
+      case 'memory':
+        navigation.navigate('UserPreferenceMemory');
+        break;
+      case 'background':
+        handleBackgroundSetting();
+        break;
+      case 'suggestion_settings':
+        setShowSuggestionSettings(true);
+        break;
+      case 'settings':
+        navigation.navigate('APIKeySettings');
+        break;
+      case 'clear_chat':
+        handleClearChat();
+        break;
+      case 'reconnect':
+        handleReconnect();
+        break;
+    }
+  }, [handleNewConversation, handleClearChat, handleReconnect, navigation, handleBackgroundSetting]);
+
+  /**
    * 消息操作回调 - 使用内置处理器
    */
   const handleMessageAction = useCallback((action: MessageAction | string, message: AgentMessage) => {
@@ -445,7 +740,6 @@ export const AgentScreen: React.FC = () => {
     // 将交易数据转换为编辑页面需要的格式
     const transactionForEdit = {
       id: transaction.id,
-      name: transaction.name,
       description: transaction.description,
       amount: transaction.amount,
       type: transaction.type,
@@ -499,12 +793,17 @@ export const AgentScreen: React.FC = () => {
   }, [sendMessage]);
 
   /**
+   * 计算当前对话标题（使用 useMemo 确保更新时自动刷新）
+   */
+  const currentConversationTitle = useMemo(() => {
+    const currentConv = conversations.find(c => c.id === currentConversationId);
+    return currentConv?.title || 'AI Agent';
+  }, [conversations, currentConversationId]);
+
+  /**
    * 渲染头部
    */
   const renderHeader = () => {
-    const currentConv = conversations.find(c => c.id === currentConversationId);
-    const messageCount = messages.length;
-
     return (
       <View style={styles.header}>
         {/* 左侧：对话列表按钮和标题 */}
@@ -513,18 +812,30 @@ export const AgentScreen: React.FC = () => {
             style={styles.conversationButton}
             onPress={() => setShowConversations(true)}
           >
-            <Icon name="menu" size={24} color={Colors.text} />
+            <Icon name="menu" size={22} color={Colors.text} />
           </TouchableOpacity>
 
           <View style={styles.headerTitleContainer}>
             <Text style={styles.headerTitle} numberOfLines={1}>
-              {currentConv?.title || 'AI Agent'}
+              {currentConversationTitle}
             </Text>
             <View style={styles.statusContainer}>
               <View style={[styles.statusDot, isConnected && styles.statusDotConnected]} />
               <Text style={styles.statusText}>
                 {isConnected ? '在线' : '离线'}
               </Text>
+              {/* 模型信息显示 - 可点击导航到设置 */}
+              {currentModelName && (
+                <TouchableOpacity 
+                  onPress={() => navigation.navigate('APIKeySettings')}
+                  activeOpacity={0.7}
+                  hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                >
+                  <Text style={styles.modelInfoText}>
+                    {' • '}{AI_PROVIDERS[currentProvider]?.icon || '🤖'} {currentModelName}
+                  </Text>
+                </TouchableOpacity>
+              )}
               {/* Agent 状态指示器 */}
               {agentState !== AgentState.IDLE && agentState !== AgentState.COMPLETED && (
                 <Text style={styles.agentStateText}>
@@ -545,87 +856,25 @@ export const AgentScreen: React.FC = () => {
 
         {/* 右侧：操作按钮 */}
         <View style={styles.headerRight}>
-          {/* 新建对话按钮 - 最醒目的位置 */}
+          {/* 新建对话按钮 - 放到显眼位置 */}
           <TouchableOpacity
-            style={[
-              styles.newChatButton,
-              messageCount > 10 && styles.newChatButtonHighlight, // 消息多时高亮提示
-            ]}
+            style={styles.newChatButton}
             onPress={handleNewConversation}
+            activeOpacity={0.7}
           >
-            <Icon 
-              name="add-circle" 
-              size={20} 
-              color={messageCount > 10 ? Colors.surface : Colors.primary} 
-            />
-            <Text style={[
-              styles.newChatButtonText,
-              messageCount > 10 && styles.newChatButtonTextHighlight,
-            ]}>
-              新对话
-            </Text>
+            <Icon name="add" size={18} color={Colors.primary} />
+            <Text style={styles.newChatButtonText}>新对话</Text>
           </TouchableOpacity>
 
-          {/* 工具管理按钮 */}
-          <ToolButton
-            enabledCount={toolStats.enabled}
-            totalCount={toolStats.total}
-            onPress={() => setShowToolManager(true)}
-          />
-
-          {/* 重连按钮（仅在未连接时显示） */}
-          {!isConnected && (
-            <TouchableOpacity
-              style={[styles.headerButton, styles.reconnectButton]}
-              onPress={handleReconnect}
-            >
-              <Icon name="refresh" size={20} color={Colors.surface} />
-            </TouchableOpacity>
-          )}
-
-          {/* 更多操作 */}
+          {/* 更多操作菜单 */}
           <TouchableOpacity
-            style={styles.headerButton}
-            onPress={handleClearChat}
+            style={styles.headerIconButton}
+            onPress={() => setShowMenu(true)}
+            activeOpacity={0.7}
           >
-            <Icon name="ellipsis-vertical" size={20} color={Colors.text} />
+            <Icon name="ellipsis-vertical" size={18} color={Colors.text} />
           </TouchableOpacity>
         </View>
-      </View>
-    );
-  };
-
-  /**
-   * 渲染快捷操作栏
-   */
-  const renderQuickActions = () => {
-    if (!showQuickActions) return null;
-
-    return (
-      <View style={styles.quickActionsContainer}>
-        <View style={styles.quickActionsHeader}>
-          <Text style={styles.quickActionsTitle}>💡 快捷操作</Text>
-          <TouchableOpacity onPress={() => setShowQuickActions(false)}>
-            <Icon name="close" size={18} color={Colors.textSecondary} />
-          </TouchableOpacity>
-        </View>
-
-        <ScrollView 
-          horizontal 
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.quickActionsScroll}
-        >
-          {smartSuggestions.map((item) => (
-            <TouchableOpacity
-              key={item.id}
-              style={styles.quickActionButton}
-              onPress={() => handleSend(item.text)}
-            >
-              <Text style={styles.quickActionIcon}>{item.icon}</Text>
-              <Text style={styles.quickActionText}>{item.text}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
       </View>
     );
   };
@@ -761,6 +1010,27 @@ export const AgentScreen: React.FC = () => {
   const renderEmptyState = () => {
     if (messages.length > 0) return null;
 
+    // 如果没有配置 API Key，显示配置提示
+    if (hasAPIKey === false) {
+      return (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyIcon}>🔑</Text>
+          <Text style={styles.emptyTitle}>配置 AI 模型</Text>
+          <Text style={styles.emptySubtitle}>
+            需要配置 API Key 才能使用 AI Agent
+          </Text>
+          <TouchableOpacity
+            style={styles.configButton}
+            onPress={() => setShowAPIKeyGuide(true)}
+            activeOpacity={0.8}
+          >
+            <Icon name="settings-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.configButtonText}>开始配置</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+
     return (
       <View style={styles.emptyState}>
         <Text style={styles.emptyIcon}>🤖</Text>
@@ -802,13 +1072,11 @@ export const AgentScreen: React.FC = () => {
   // 如果不是管理员，显示权限拒绝界面
   if (!isAdmin) {
     return (
-      <SafeAreaView style={styles.safeArea}>
-        {Platform.OS === 'android' && (
-          <StatusBar 
-            backgroundColor={Colors.surface} 
-            barStyle="dark-content" 
-          />
-        )}
+      <SafeAreaView style={styles.safeArea} edges={['top']}>
+        <StatusBar 
+          backgroundColor={Colors.surface} 
+          barStyle="dark-content" 
+        />
         {renderHeader()}
         {renderPermissionDenied()}
       </SafeAreaView>
@@ -816,14 +1084,12 @@ export const AgentScreen: React.FC = () => {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      {/* Android 状态栏 */}
-      {Platform.OS === 'android' && (
-        <StatusBar 
-          backgroundColor={Colors.surface} 
-          barStyle="dark-content" 
-        />
-      )}
+    <SafeAreaView style={styles.safeArea} edges={['top']}>
+      {/* 状态栏配置 */}
+      <StatusBar 
+        backgroundColor={Colors.surface} 
+        barStyle="dark-content" 
+      />
       
       <KeyboardAvoidingView
         style={styles.keyboardAvoidingView}
@@ -833,24 +1099,60 @@ export const AgentScreen: React.FC = () => {
         {/* 头部 */}
         {renderHeader()}
 
-        {/* 快捷操作栏（智能建议） */}
-        {renderQuickActions()}
-
         {/* 消息列表 */}
         <View style={styles.messagesContainer}>
+          {backgroundImage && (
+            <>
+              <Image 
+                source={{ uri: backgroundImage }} 
+                style={StyleSheet.absoluteFill} 
+                resizeMode="cover"
+              />
+              {/* 半透明遮罩，确保文字可读性 */}
+              <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255, 255, 255, 0.75)' }]} />
+            </>
+          )}
           {renderEmptyState()}
           <MessageList 
+            ref={messageListRef}
             messages={messages} 
             isTyping={isTyping}
+            agentState={
+              agentState === AgentState.PARSING ? 'parsing' :
+              agentState === AgentState.PLANNING ? 'planning' :
+              agentState === AgentState.EXECUTING ? 'executing' :
+              agentState === AgentState.REFLECTING ? 'reflecting' :
+              'idle'
+            }
             onTransactionPress={handleTransactionPress}
             onActionButtonPress={handleActionButtonPress}
             onMessageLongPress={handleMessageLongPress}
             onAttachmentPress={handleAttachmentPress}
+            onSuggestedActionPress={handleSuggestedActionPress}
           />
         </View>
 
+        {/* 智能建议栏 - 仅显示 AI 对话后的后续建议 */}
+        {currentSuggestedActions.length > 0 && (
+          <SuggestedActionsBar
+            mode="suggestions"
+            actions={currentSuggestedActions}
+            onActionPress={handleSuggestedActionPress}
+            onDismiss={handleDismissSuggestions}
+          />
+        )}
+
         {/* 输入栏 */}
-        <InputBar onSend={handleSend} disabled={!isConnected} />
+        <InputBar 
+          ref={inputBarRef}
+          onSend={handleSend} 
+          disabled={!isConnected}
+          isProcessing={isTyping || agentState !== AgentState.IDLE}
+          onCancel={cancelChat}
+          enableVoice={true}
+          currentProvider={currentProvider}
+          topSuggestion={topSuggestion}
+        />
       </KeyboardAvoidingView>
 
       {/* 对话历史抽屉 */}
@@ -888,94 +1190,55 @@ export const AgentScreen: React.FC = () => {
         onToggleAlwaysAllowed={toggleAlwaysAllowed}
       />
 
-      {/* 危险操作确认对话框 */}
-      <Modal
+      {/* 危险操作确认对话框 - 使用优化后的 ConfirmationDialog 组件 */}
+      <ConfirmationDialog
         visible={isAwaitingConfirmation && !!pendingConfirmation}
-        animationType="fade"
-        transparent={true}
-        onRequestClose={() => rejectOperation('用户取消')}
-      >
-        <View style={styles.confirmationOverlay}>
-          <View style={styles.confirmationDialog}>
-            {/* 对话框头部 */}
-            <View style={styles.confirmationHeader}>
-              <Text style={styles.confirmationIcon}>
-                {pendingConfirmation?.riskLevel === 'critical' ? '🔴' : '⚠️'}
-              </Text>
-              <Text style={styles.confirmationTitle}>
-                {pendingConfirmation?.riskLevel === 'critical' ? '危险操作' : '操作确认'}
-              </Text>
-            </View>
-            
-            {/* 操作描述 */}
-            <Text style={styles.confirmationMessage}>
-              {pendingConfirmation?.message}
-            </Text>
-            
-            {/* 操作详情 */}
-            {pendingConfirmation?.details && pendingConfirmation.details.length > 0 && (
-              <View style={styles.confirmationDetails}>
-                {pendingConfirmation.details.map((detail, index) => (
-                  <Text key={index} style={styles.confirmationDetailItem}>
-                    • {detail}
-                  </Text>
-                ))}
-              </View>
-            )}
-            
-            {/* 风险提示 */}
-            {pendingConfirmation?.riskLevel === 'critical' && (
-              <View style={styles.confirmationWarning}>
-                <Text style={styles.confirmationWarningText}>
-                  ⚠️ 此操作不可撤销，请谨慎确认
-                </Text>
-              </View>
-            )}
-            
-            {/* 按钮区域 */}
-            <View style={styles.confirmationButtons}>
-              <TouchableOpacity
-                style={[styles.confirmationButton, styles.confirmationButtonCancel]}
-                onPress={() => rejectOperation('用户取消')}
-              >
-                <Text style={styles.confirmationButtonCancelText}>取消</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.confirmationButton, 
-                  styles.confirmationButtonConfirm,
-                  pendingConfirmation?.riskLevel === 'critical' && styles.confirmationButtonDanger
-                ]}
-                onPress={confirmOperation}
-              >
-                <Text style={styles.confirmationButtonConfirmText}>
-                  {pendingConfirmation?.riskLevel === 'critical' ? '确认执行' : '确认'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-            
-            {/* 始终允许按钮（仅对非 critical 级别显示） */}
-            {pendingConfirmation?.riskLevel !== 'critical' && (
-              <TouchableOpacity
-                style={styles.alwaysAllowButton}
-                onPress={() => {
-                  if (pendingConfirmation?.toolName) {
-                    // 使用 toggleAlwaysAllowed 以同步更新 UI 状态
-                    toggleAlwaysAllowed(pendingConfirmation.toolName, true);
-                    confirmOperation();
-                  }
-                }}
-              >
-                <Icon name="checkmark-circle-outline" size={16} color={Colors.primary} />
-                <Text style={styles.alwaysAllowButtonText}>始终允许此操作</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
-      </Modal>
+        request={pendingConfirmation}
+        onConfirm={confirmOperation}
+        onCancel={(reason?: string) => rejectOperation(reason || '用户取消')}
+        onClose={() => {}}
+        onAlwaysAllow={(toolName: string) => {
+          // 对于领域工具，需要使用完整的 key（toolName.action）
+          const action = pendingConfirmation?.toolArgs?.action as string | undefined;
+          const key = action ? toolName : pendingConfirmation?.toolName || toolName;
+          toggleAlwaysAllowed(key, true);
+        }}
+      />
+
+      {/* 更多操作菜单 */}
+      <AgentHeaderMenu
+        visible={showMenu}
+        onClose={() => setShowMenu(false)}
+        onAction={handleMenuAction}
+        isConnected={isConnected}
+        toolCount={toolStats.enabled}
+        totalToolCount={toolStats.total}
+      />
 
       {/* 加载指示器 */}
       {renderLoading()}
+
+      {/* API Key 配置引导 */}
+      <APIKeyGuide
+        visible={showAPIKeyGuide}
+        onClose={() => setShowAPIKeyGuide(false)}
+        onConfigured={() => {
+          setShowAPIKeyGuide(false);
+          // 重新检查 API Key 状态
+          apiKeyStorage.hasAnyAPIKey().then(setHasAPIKey);
+        }}
+        allowSkip={false}
+      />
+
+      {/* 智能建议设置 */}
+      <SuggestionSettingsModal
+        visible={showSuggestionSettings}
+        onClose={() => setShowSuggestionSettings(false)}
+        enabled={suggestionSettings.enabled}
+        onEnableChange={(enabled) => setSuggestionSettings(prev => ({ ...prev, enabled }))}
+        maxCount={suggestionSettings.maxCount}
+        onMaxCountChange={(maxCount) => setSuggestionSettings(prev => ({ ...prev, maxCount }))}
+      />
     </SafeAreaView>
   );
 };
@@ -984,8 +1247,6 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: Colors.background,
-    // Android 需要额外的顶部间距
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   keyboardAvoidingView: {
     flex: 1,
@@ -996,29 +1257,33 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.xs,
     backgroundColor: Colors.surface,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
+    minHeight: 48,
   },
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
+    minWidth: 0, // 允许收缩
   },
   conversationButton: {
-    width: 40,
-    height: 40,
+    width: 36,
+    height: 36,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: Spacing.xs,
+    flexShrink: 0,
   },
   headerTitleContainer: {
     flex: 1,
+    minWidth: 0, // 允许标题文字收缩
   },
   headerTitle: {
-    fontSize: FontSizes.lg,
+    fontSize: FontSizes.md,
     fontWeight: FontWeights.bold,
     color: Colors.text,
   },
@@ -1041,6 +1306,11 @@ const styles = StyleSheet.create({
     fontSize: FontSizes.xs,
     color: Colors.textSecondary,
   },
+  modelInfoText: {
+    fontSize: FontSizes.xs,
+    color: Colors.primary,
+    fontWeight: FontWeights.medium,
+  },
   typingText: {
     fontSize: FontSizes.xs,
     color: Colors.primary,
@@ -1054,87 +1324,56 @@ const styles = StyleSheet.create({
   headerRight: {
     flexDirection: 'row',
     alignItems: 'center',
+    flexShrink: 0,
+    gap: 6,
   },
-  headerButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: Colors.backgroundSecondary,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginLeft: Spacing.sm,
-  },
-  reconnectButton: {
-    backgroundColor: Colors.warning,
-  },
-
-  // 新建对话按钮样式
+  // 新建对话按钮 - 显眼的主操作
   newChatButton: {
     flexDirection: 'row',
     alignItems: 'center',
+    paddingHorizontal: 10,
     paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: BorderRadius.round,
-    backgroundColor: Colors.backgroundSecondary,
+    borderRadius: 16,
+    backgroundColor: 'rgba(59, 130, 246, 0.1)',
     borderWidth: 1,
     borderColor: Colors.primary,
-    marginRight: Spacing.xs,
-  },
-  newChatButtonHighlight: {
-    backgroundColor: Colors.primary,
-    borderColor: Colors.primary,
+    gap: 4,
   },
   newChatButtonText: {
-    fontSize: FontSizes.sm,
-    fontWeight: FontWeights.medium,
-    color: Colors.primary,
-    marginLeft: 4,
-  },
-  newChatButtonTextHighlight: {
-    color: Colors.surface,
-  },
-
-  // 快捷操作样式
-  quickActionsContainer: {
-    backgroundColor: Colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-    paddingVertical: Spacing.md,
-  },
-  quickActionsHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.md,
-    marginBottom: Spacing.sm,
-  },
-  quickActionsTitle: {
-    fontSize: FontSizes.sm,
-    color: Colors.textSecondary,
+    fontSize: 12,
     fontWeight: FontWeights.semibold,
+    color: Colors.primary,
   },
-  quickActionsScroll: {
-    paddingHorizontal: Spacing.md,
-  },
-  quickActionButton: {
+  // 统一的头部图标按钮样式
+  headerIconButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     backgroundColor: Colors.backgroundSecondary,
-    borderRadius: BorderRadius.lg,
-    paddingVertical: Spacing.sm,
-    paddingHorizontal: Spacing.md,
-    marginRight: Spacing.sm,
-    flexDirection: 'row',
+    justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: Colors.border,
   },
-  quickActionIcon: {
-    fontSize: FontSizes.md,
-    marginRight: Spacing.xs,
+  headerIconButtonWarning: {
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
   },
-  quickActionText: {
-    fontSize: FontSizes.sm,
-    color: Colors.text,
-    fontWeight: FontWeights.medium,
+  headerIconButtonDanger: {
+    backgroundColor: Colors.warning,
+  },
+  iconButtonBadge: {
+    position: 'absolute',
+    top: 2,
+    right: 2,
+    minWidth: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: Colors.warning,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  iconButtonBadgeText: {
+    fontSize: 9,
+    fontWeight: FontWeights.bold,
+    color: Colors.surface,
   },
 
   // 消息容器
@@ -1309,113 +1548,22 @@ const styles = StyleSheet.create({
     marginTop: Spacing.xs,
   },
 
-  // 确认对话框样式
-  confirmationOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: Spacing.lg,
-  },
-  confirmationDialog: {
-    backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.xl,
-    padding: Spacing.lg,
-    width: '100%',
-    maxWidth: 340,
-    ...Shadows.lg,
-  },
-  confirmationHeader: {
+  // API Key 配置按钮
+  configButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: Spacing.md,
-  },
-  confirmationIcon: {
-    fontSize: 28,
-    marginRight: Spacing.sm,
-  },
-  confirmationTitle: {
-    fontSize: FontSizes.lg,
-    fontWeight: FontWeights.bold,
-    color: Colors.text,
-  },
-  confirmationMessage: {
-    fontSize: FontSizes.md,
-    color: Colors.text,
-    lineHeight: 22,
-    marginBottom: Spacing.md,
-  },
-  confirmationDetails: {
-    backgroundColor: Colors.backgroundSecondary,
-    borderRadius: BorderRadius.md,
-    padding: Spacing.md,
-    marginBottom: Spacing.md,
-  },
-  confirmationDetailItem: {
-    fontSize: FontSizes.sm,
-    color: Colors.textSecondary,
-    lineHeight: 20,
-    marginBottom: 4,
-  },
-  confirmationWarning: {
-    backgroundColor: '#FFF3F3',
-    borderRadius: BorderRadius.md,
-    padding: Spacing.sm,
-    marginBottom: Spacing.md,
-    borderWidth: 1,
-    borderColor: Colors.error,
-  },
-  confirmationWarningText: {
-    fontSize: FontSizes.sm,
-    color: Colors.error,
-    textAlign: 'center',
-    fontWeight: FontWeights.medium,
-  },
-  confirmationButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: Spacing.sm,
-  },
-  confirmationButton: {
-    flex: 1,
-    paddingVertical: Spacing.md,
-    borderRadius: BorderRadius.lg,
-    alignItems: 'center',
     justifyContent: 'center',
-  },
-  confirmationButtonCancel: {
-    backgroundColor: Colors.backgroundSecondary,
-    marginRight: Spacing.sm,
-  },
-  confirmationButtonConfirm: {
     backgroundColor: Colors.primary,
-    marginLeft: Spacing.sm,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.xl,
+    borderRadius: BorderRadius.lg,
+    marginTop: Spacing.lg,
+    gap: Spacing.sm,
+    ...Shadows.md,
   },
-  confirmationButtonDanger: {
-    backgroundColor: Colors.error,
-  },
-  confirmationButtonCancelText: {
+  configButtonText: {
     fontSize: FontSizes.md,
     fontWeight: FontWeights.semibold,
-    color: Colors.text,
-  },
-  confirmationButtonConfirmText: {
-    fontSize: FontSizes.md,
-    fontWeight: FontWeights.semibold,
-    color: Colors.surface,
-  },
-  alwaysAllowButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: Spacing.sm,
-    marginTop: Spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
-  },
-  alwaysAllowButtonText: {
-    fontSize: FontSizes.sm,
-    color: Colors.primary,
-    marginLeft: Spacing.xs,
+    color: '#FFFFFF',
   },
 });

@@ -9,6 +9,7 @@ import 'react-native-get-random-values';
 import 'react-native-url-polyfill/auto';
 import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { BottomTabNavigator } from './src/navigation/BottomTabNavigator';
@@ -29,6 +30,9 @@ import {
   SubmitFeedbackScreen,
   SettingsScreen,
   DataExportScreen,
+  APIKeySettingsScreen,
+  DataStorageSettingsScreen,
+  UserPreferenceMemoryScreen,
 } from './src/screens';
 import { InviteMemberScreen } from './src/screens/InviteMemberScreen';
 import { EditProfileScreen } from './src/screens/EditProfileScreen';
@@ -158,6 +162,18 @@ const MainNavigator = () => {
         name="DataExport"
         component={DataExportScreen}
       />
+      <MainStack.Screen
+        name="APIKeySettings"
+        component={APIKeySettingsScreen}
+      />
+      <MainStack.Screen
+        name="DataStorageSettings"
+        component={DataStorageSettingsScreen}
+      />
+      <MainStack.Screen
+        name="UserPreferenceMemory"
+        component={UserPreferenceMemoryScreen}
+      />
 
       {/* 其他全屏页面 */}
     </MainStack.Navigator>
@@ -184,23 +200,25 @@ const AppNavigator = () => {
 function App() {
   return (
     <SafeAreaProvider>
-      <AuthProvider>
-        <LedgerProvider>
-          <CategoryProvider>
-            <PaymentMethodProvider>
-              <TemplateProvider>
-                <NavigationContainer>
-                  <StatusBar barStyle="dark-content" backgroundColor="#F2F2F7" />
-                  <AppNavigator />
-                  {/* 网络调试器 - 点击右下角🐛图标查看 */}
-                  {/*<NetworkDebugger />*/}
-                </NavigationContainer>
-              </TemplateProvider>
-            </PaymentMethodProvider>
-          </CategoryProvider>
-        </LedgerProvider>
-      </AuthProvider>
-      <Toast />
+      <KeyboardProvider>
+        <AuthProvider>
+          <LedgerProvider>
+            <CategoryProvider>
+              <PaymentMethodProvider>
+                <TemplateProvider>
+                  <NavigationContainer>
+                    <StatusBar barStyle="dark-content" backgroundColor="#F2F2F7" />
+                    <AppNavigator />
+                    {/* 网络调试器 - 点击右下角🐛图标查看 */}
+                    {/*<NetworkDebugger />*/}
+                  </NavigationContainer>
+                </TemplateProvider>
+              </PaymentMethodProvider>
+            </CategoryProvider>
+          </LedgerProvider>
+        </AuthProvider>
+        <Toast />
+      </KeyboardProvider>
     </SafeAreaProvider>
   );
 }

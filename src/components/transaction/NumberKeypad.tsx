@@ -100,11 +100,11 @@ export const NumberKeypad: React.FC<NumberKeypadProps> = ({
 
 const styles = StyleSheet.create({
   container: {
-    paddingVertical: Spacing.sm,
+    paddingVertical: Spacing.xs,
   },
   mainKeypad: {
     flexDirection: 'row',
-    gap: Spacing.sm,
+    gap: Spacing.xs,
   },
   numbersSection: {
     flex: 1,
@@ -116,53 +116,53 @@ const styles = StyleSheet.create({
   },
   key: {
     flex: 1,
-    height: 56,
+    height: 48,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.lg,
+    borderRadius: BorderRadius.md,
     ...Shadows.sm,
   },
   deleteKey: {
     backgroundColor: Colors.backgroundSecondary,
   },
   keyText: {
-    fontSize: 24,
+    fontSize: 22,
     color: Colors.text,
     fontWeight: FontWeights.medium,
   },
   deleteKeyText: {
-    fontSize: 20,
+    fontSize: 18,
     color: Colors.textSecondary,
   },
   operatorsSection: {
-    width: 64,
+    width: 56,
     gap: Spacing.xs,
   },
   operatorKey: {
-    height: 56,
+    height: 48,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: Colors.primary + '15',
-    borderRadius: BorderRadius.lg,
+    borderRadius: BorderRadius.md,
     borderWidth: 1,
     borderColor: Colors.primary + '30',
   },
   operatorText: {
-    fontSize: 28,
+    fontSize: 24,
     color: Colors.primary,
     fontWeight: FontWeights.semibold,
   },
   equalsKey: {
-    height: 56,
+    height: 48,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: Colors.primary,
-    borderRadius: BorderRadius.lg,
+    borderRadius: BorderRadius.md,
     ...Shadows.sm,
   },
   equalsText: {
-    fontSize: 28,
+    fontSize: 24,
     color: '#FFFFFF',
     fontWeight: FontWeights.bold,
   },

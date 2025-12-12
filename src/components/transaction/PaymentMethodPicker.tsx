@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BorderRadius, Colors, FontSizes, FontWeights, Shadows, Spacing } from '../../constants/theme';
 import type { PaymentMethod } from '../../types/paymentMethod';
 import { PaymentIcon } from '../payment/PaymentIcon';
@@ -27,13 +28,15 @@ export const PaymentMethodPicker: React.FC<PaymentMethodPickerProps> = ({
   currentPaymentMethod,
   onSelect,
   onClose,
-  title = '选择支付方式',
+  title = '选择账户',
 }) => {
+  const insets = useSafeAreaInsets();
+  
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.overlay} onPress={onClose}>
-        <Pressable onPress={e => e.stopPropagation()}>
-          <View style={styles.container}>
+      <View style={styles.overlay}>
+        <Pressable style={styles.backdrop} onPress={onClose} />
+        <View style={[styles.container, { paddingBottom: Math.max(insets.bottom, Spacing.lg) }]}>
             {/* 把手 */}
             <View style={styles.handle} />
 
@@ -45,7 +48,7 @@ export const PaymentMethodPicker: React.FC<PaymentMethodPickerProps> = ({
               </TouchableOpacity>
             </View>
 
-            {/* 支付方式列表 */}
+            {/* 账户列表 */}
             <ScrollView
               style={styles.scrollView}
               contentContainerStyle={styles.scrollContent}
@@ -91,9 +94,8 @@ export const PaymentMethodPicker: React.FC<PaymentMethodPickerProps> = ({
                 );
               })}
             </ScrollView>
-          </View>
-        </Pressable>
-      </Pressable>
+        </View>
+      </View>
     </Modal>
   );
 };
@@ -101,15 +103,19 @@ export const PaymentMethodPicker: React.FC<PaymentMethodPickerProps> = ({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'flex-end',
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
   },
   container: {
     backgroundColor: Colors.surface,
     borderTopLeftRadius: BorderRadius.xl,
     borderTopRightRadius: BorderRadius.xl,
     maxHeight: '70%',
-    paddingBottom: Spacing.xl,
+    width: '100%',
+    ...Shadows.xl,
   },
   handle: {
     width: 40,

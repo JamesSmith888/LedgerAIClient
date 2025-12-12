@@ -4,7 +4,8 @@ import {
     Text,
     StyleSheet,
     TouchableOpacity,
-    ScrollView
+    ScrollView,
+    Image
 } from 'react-native';
 import { showConfirm } from '../utils/toast';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -13,6 +14,7 @@ import { Colors, Spacing, FontSizes, BorderRadius, Shadows, FontWeights } from '
 import { useAuth } from '../context/AuthContext';
 import { useLedger } from '../context/LedgerContext';
 import { Icon, FeatherIcons, AppIcons } from '../components/common';
+import { API_BASE_URL } from '../api/config';
 
 export const ProfileScreen: React.FC = () => {
     const navigation = useNavigation();
@@ -33,12 +35,30 @@ export const ProfileScreen: React.FC = () => {
     // 获取显示的用户名：优先显示昵称，然后是用户名
     const displayName = (user?.nickname) || (user?.username) || (user?.name) || '用户';
 
+    // 处理头像URL
+    const getAvatarSource = () => {
+        if (user?.avatarUrl) {
+            if (user.avatarUrl.startsWith('http')) {
+                return { uri: user.avatarUrl };
+            } else {
+                return { uri: `${API_BASE_URL}${user.avatarUrl}` };
+            }
+        }
+        return null;
+    };
+    
+    const avatarSource = getAvatarSource();
+
     return (
         <ScrollView style={styles.container}>
             {/* 头部用户信息 */}
             <View style={styles.header}>
                 <View style={styles.avatarContainer}>
-                    <Icon name={AppIcons.person} size={40} color={Colors.surface} />
+                    {avatarSource ? (
+                        <Image source={avatarSource} style={styles.avatarImage} />
+                    ) : (
+                        <Icon name={AppIcons.person} size={40} color={Colors.surface} />
+                    )}
                 </View>
                 <Text style={styles.username}>{displayName}</Text>
                 <TouchableOpacity
@@ -75,9 +95,9 @@ export const ProfileScreen: React.FC = () => {
                 >
                     <Icon name={AppIcons.cardOutline} size={24} color={Colors.primary} />
                     <View style={styles.menuTextContainer}>
-                        <Text style={styles.menuText}>支付方式</Text>
+                        <Text style={styles.menuText}>收付账户</Text>
                         <Text style={styles.menuSubtext}>
-                            管理你的支付方式
+                            管理收入和支出的账户
                         </Text>
                     </View>
                     <Icon name={AppIcons.chevronForward} size={20} color={Colors.textSecondary} />
@@ -174,6 +194,12 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         marginBottom: Spacing.md,
+        overflow: 'hidden',
+    },
+    avatarImage: {
+        width: '100%',
+        height: '100%',
+        resizeMode: 'cover',
     },
     username: {
         fontSize: FontSizes.xl,

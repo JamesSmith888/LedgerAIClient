@@ -173,6 +173,7 @@ export const AppIcons = {
   codeSlash: 'code-slash',
   gridOutline: 'grid-outline',
   documentOutline: 'document-outline',
+  cloudOutline: 'cloud-outline',
   cloudUploadOutline: 'cloud-upload-outline',
   cloudDownloadOutline: 'cloud-download-outline',
   notificationsOutline: 'notifications-outline',

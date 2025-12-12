@@ -9,6 +9,7 @@ import {
     Modal,
     Pressable,
     RefreshControl,
+    SectionList,
     StyleSheet,
     Text,
     TouchableOpacity,
@@ -28,6 +29,7 @@ import {
     Shadows,
     Spacing,
 } from '../constants/theme';
+import { TransactionIcons } from '../constants/icons';
 import type { Category, Transaction } from '../types/transaction';
 import { transactionAPI } from '../api/services';
 import { useCategories } from '../context/CategoryContext';
@@ -46,6 +48,8 @@ import { MonthPickerSheet } from '../components/transaction/MonthPickerSheet';
 import { DailyStatisticsCalendar } from '../components/transaction/DailyStatisticsCalendar';
 import { CollapsibleSearchBar } from '../components/transaction/SearchBar';
 import Swipeable from 'react-native-gesture-handler/Swipeable';
+import { usePaymentMethod } from '../context/PaymentMethodContext';
+import { PaymentIcon } from '../components/payment/PaymentIcon';
 
 type FilterType = 'ALL' | 'EXPENSE' | 'INCOME';
 
@@ -68,7 +72,7 @@ const SORT_OPTIONS: SortOption[] = [
 ];
 
 // 分组类型定义
-type GroupByType = 'none' | 'day' | 'category' | 'amount' | 'creator';
+type GroupByType = 'none' | 'day' | 'category' | 'amount' | 'creator' | 'paymentMethod';
 
 interface GroupByOption {
     type: GroupByType;
@@ -82,6 +86,7 @@ const GROUP_BY_OPTIONS: GroupByOption[] = [
     { type: 'none', label: '不分组', icon: 'list', description: '平铺显示所有记录' },
     { type: 'day', label: '按天', icon: 'calendar-outline', description: '按日期分组显示' },
     { type: 'category', label: '按分类', icon: 'pricetag', description: '按消费分类分组显示' },
+    { type: 'paymentMethod', label: '按账户', icon: 'card', description: '按收付账户分组显示' },
     { type: 'amount', label: '按金额', icon: 'cash', description: '按金额区间分组显示' },
     { type: 'creator', label: '按创建人', icon: 'person', description: '按记录创建人分组' },
 ];
@@ -106,7 +111,8 @@ interface TransactionGroup {
     key: string;
     title: string;
     icon: string;
-    transactions: Transaction[];
+    data: Transaction[]; // Rename transactions to data for SectionList compatibility
+    transactions: Transaction[]; // Keep for backward compatibility if needed, or just use data
     totalAmount: number;
     count: number;
     totalExpense: number;  // 分组内支出总和
@@ -135,6 +141,7 @@ export const TransactionListScreen: React.FC = () => {
     const { user } = useAuth();
     const currentUserId = user?._id ? Number(user._id) : null;
     const { quickPanelTemplates } = useTemplate();
+    const { paymentMethods } = usePaymentMethod();
 
     // ========== ✨ 新增：账本相关状态 ==========
     const { ledgers, currentLedger, defaultLedgerId, setCurrentLedger } = useLedger();
@@ -188,6 +195,8 @@ export const TransactionListScreen: React.FC = () => {
 
     // 当前选中的月份（默认当前月）
     const [selectedMonth, setSelectedMonth] = useState<Date>(new Date());
+    // ✨ 新增：当前选中的日期（用于按天筛选）
+    const [selectedDay, setSelectedDay] = useState<Date | null>(null);
 
     // ========== ✨ 新增：月度汇总统计状态 ==========
     const [monthlySummary, setMonthlySummary] = useState({
@@ -266,7 +275,7 @@ export const TransactionListScreen: React.FC = () => {
                 loadMonthlyStatistics();
                 loadMonthlySummary();
             }
-        }, [filterType, filterLedger, selectedMonth, sortField, sortDirection, searchKeyword]) // 当筛选条件、月份、排序或搜索关键词变化时重新加载
+        }, [filterType, filterLedger, selectedMonth, selectedDay, sortField, sortDirection, searchKeyword]) // 当筛选条件、月份、日期、排序或搜索关键词变化时重新加载
     );
 
     // 根据categoryId查找category对象
@@ -277,6 +286,12 @@ export const TransactionListScreen: React.FC = () => {
     // 根据ledgerId查找ledger对象
     const getLedgerById = (ledgerId: number): Ledger | undefined => {
         return ledgers.find(l => l.id === ledgerId);
+    }
+
+    // 根据paymentMethodId查找paymentMethod对象
+    const getPaymentMethodById = (paymentMethodId: number | undefined) => {
+        if (!paymentMethodId) return undefined;
+        return paymentMethods.find(p => p.id === paymentMethodId);
     }
 
 
@@ -308,9 +323,18 @@ export const TransactionListScreen: React.FC = () => {
             let endTime: Date | null = null;
             
             if (!searchKeyword) {
-                // 非搜索模式：按月份筛选
-                startTime = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), 1);
-                endTime = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0, 23, 59, 59, 999);
+                if (selectedDay) {
+                    // ✨ 按天筛选
+                    startTime = new Date(selectedDay);
+                    startTime.setHours(0, 0, 0, 0);
+                    
+                    endTime = new Date(selectedDay);
+                    endTime.setHours(23, 59, 59, 999);
+                } else {
+                    // 非搜索模式且未选具体日期：按月份筛选
+                    startTime = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), 1);
+                    endTime = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0, 23, 59, 59, 999);
+                }
             }
 
             const response = await transactionAPI.query({
@@ -319,7 +343,7 @@ export const TransactionListScreen: React.FC = () => {
                 startTime: startTime?.toISOString() || null,
                 endTime: endTime?.toISOString() || null,
                 page,
-                size: searchKeyword ? 20 : 10, // 搜索模式下每页显示更多结果
+                size: searchKeyword ? 20 : (selectedDay ? 100 : 10), // 按天查看时加载更多，避免分页
                 sortBy: sortField,
                 sortDirection: sortDirection,
                 keyword: searchKeyword || null,
@@ -637,6 +661,20 @@ export const TransactionListScreen: React.FC = () => {
                     groupIcon = category.icon;
                     break;
                 }
+                case 'paymentMethod': {
+                    // 按收付账户分组
+                    const paymentMethod = getPaymentMethodById(transaction.paymentMethodId);
+                    if (paymentMethod) {
+                        groupKey = String(paymentMethod.id);
+                        groupTitle = paymentMethod.name;
+                        groupIcon = paymentMethod.icon || 'card';
+                    } else {
+                        groupKey = 'unknown';
+                        groupTitle = '未指定账户';
+                        groupIcon = 'card-outline';
+                    }
+                    break;
+                }
                 case 'amount': {
                     // 按金额区间分组
                     const range = AMOUNT_RANGES.find(
@@ -664,6 +702,7 @@ export const TransactionListScreen: React.FC = () => {
                     key: groupKey,
                     title: groupTitle,
                     icon: groupIcon,
+                    data: [], // Initialize data
                     transactions: [],
                     totalAmount: 0,
                     count: 0,
@@ -674,6 +713,7 @@ export const TransactionListScreen: React.FC = () => {
 
             const group = groupMap.get(groupKey)!;
             group.transactions.push(transaction);
+            group.data.push(transaction); // Push to data as well
             group.totalAmount += transaction.amount;
             group.count += 1;
             
@@ -695,7 +735,7 @@ export const TransactionListScreen: React.FC = () => {
             // 其他分组：按总金额降序
             return b.totalAmount - a.totalAmount;
         });
-    }, [groupBy, getCategoryById]);
+    }, [groupBy, getCategoryById, getPaymentMethodById]);
 
     // 获取分组后的数据 - 使用 useMemo 优化
     const groupedTransactions = useMemo(() => {
@@ -762,44 +802,58 @@ export const TransactionListScreen: React.FC = () => {
     }, [ledgers, filterLedger, currentLedger]);
 
     // ========== 渲染列表项 ==========
-    const renderGroupHeader = (group: TransactionGroup) => (
-        <View style={styles.groupHeader}>
-            <View style={styles.groupHeaderLeft}>
-                {groupBy === 'category' ? (
-                    <CategoryIcon icon={group.icon} size={16} color={Colors.textSecondary} />
-                ) : (
-                    <Icon name={group.icon as any} size={16} color={Colors.textSecondary} />
-                )}
-                <Text style={styles.groupHeaderTitle}>{group.title}</Text>
-                <Text style={styles.groupHeaderCount}>({group.count}笔)</Text>
-            </View>
-            <View style={styles.groupHeaderRight}>
-                {/* 支出 */}
-                {group.totalExpense > 0 && (
-                    <View style={styles.groupStatItem}>
-                        <Text style={styles.groupStatLabel}>支</Text>
-                        <Text style={styles.groupStatValue}>
-                            {group.totalExpense.toFixed(2)}
-                        </Text>
-                    </View>
-                )}
-                
-                {/* 收入 */}
-                {group.totalIncome > 0 && (
-                    <View style={styles.groupStatItem}>
-                        <Text style={styles.groupStatLabel}>收</Text>
-                        <Text style={styles.groupStatValue}>
-                            {group.totalIncome.toFixed(2)}
-                        </Text>
-                    </View>
-                )}
+    const renderGroupHeader = (group: TransactionGroup) => {
+        // 根据分组类型渲染不同的图标
+        const renderGroupIcon = () => {
+            if (groupBy === 'category') {
+                return <CategoryIcon icon={group.icon} size={16} color={Colors.textSecondary} />;
+            }
+            if (groupBy === 'paymentMethod') {
+                // 获取支付方式信息以显示正确的图标
+                const paymentMethod = paymentMethods.find(p => String(p.id) === group.key);
+                if (paymentMethod) {
+                    return <PaymentIcon type={paymentMethod.type} iconName={paymentMethod.icon} size={16} />;
+                }
+                return <Icon name="card-outline" size={16} color={Colors.textSecondary} />;
+            }
+            return <Icon name={group.icon as any} size={16} color={Colors.textSecondary} />;
+        };
 
-                {group.totalExpense === 0 && group.totalIncome === 0 && (
-                    <Text style={styles.groupHeaderEmpty}>-</Text>
-                )}
+        return (
+            <View style={styles.groupHeader}>
+                <View style={styles.groupHeaderLeft}>
+                    {renderGroupIcon()}
+                    <Text style={styles.groupHeaderTitle}>{group.title}</Text>
+                    <Text style={styles.groupHeaderCount}>({group.count}笔)</Text>
+                </View>
+                <View style={styles.groupHeaderRight}>
+                    {/* 支出 */}
+                    {group.totalExpense > 0 && (
+                        <View style={styles.groupStatItem}>
+                            <Text style={styles.groupStatLabel}>支</Text>
+                            <Text style={styles.groupStatValue}>
+                                {group.totalExpense.toFixed(2)}
+                            </Text>
+                        </View>
+                    )}
+                    
+                    {/* 收入 */}
+                    {group.totalIncome > 0 && (
+                        <View style={styles.groupStatItem}>
+                            <Text style={styles.groupStatLabel}>收</Text>
+                            <Text style={styles.groupStatValue}>
+                                {group.totalIncome.toFixed(2)}
+                            </Text>
+                        </View>
+                    )}
+
+                    {group.totalExpense === 0 && group.totalIncome === 0 && (
+                        <Text style={styles.groupHeaderEmpty}>-</Text>
+                    )}
+                </View>
             </View>
-        </View>
-    );
+        );
+    };
 
     // 渲染侧滑删除按钮
     const renderRightActions = (progress: Animated.AnimatedInterpolation<number>, dragX: Animated.AnimatedInterpolation<number>, item: Transaction) => {
@@ -887,6 +941,12 @@ export const TransactionListScreen: React.FC = () => {
                                         <Text style={styles.categoryName} numberOfLines={1}>
                                             {item.description || category.name}
                                         </Text>
+                                        {/* AI 来源标识 - 在标题旁边显示小图标 */}
+                                        {item.source === 'AI' && (
+                                            <View style={styles.aiTitleBadge}>
+                                                <Icon name="sparkles" size={12} color={Colors.primary} />
+                                            </View>
+                                        )}
                                     </View>
                                     
                                     {/* 第二行：元信息（固定高度，绝对定位的元素） */}
@@ -1107,12 +1167,41 @@ export const TransactionListScreen: React.FC = () => {
                     selectedMonth={selectedMonth}
                     statistics={dailyStatistics}
                     visible={calendarVisible}
+                    selectedDay={selectedDay}
+                    showDetailModal={false} // Disable modal, use list filtering instead
                     onDayPress={(date) => {
-                        // 点击某一天，可以滚动到对应日期的交易
+                        // 点击某一天，切换到该天视图
                         console.log('点击日期:', date);
+                        // 如果点击的是已选中的日期，则取消选中（回到月视图）
+                        if (selectedDay && date.toDateString() === selectedDay.toDateString()) {
+                            setSelectedDay(null);
+                        } else {
+                            setSelectedDay(date);
+                        }
+                        // 重置分页
+                        setCurrentPage(0);
                     }}
                 />
             </Card>
+
+            {/* ✨ 查看特定日期提示栏 */}
+            {selectedDay && (
+                <View style={styles.selectedDayBanner}>
+                    <View style={styles.selectedDayInfo}>
+                        <Icon name="calendar" size={16} color={Colors.primary} />
+                        <Text style={styles.selectedDayText}>
+                            正在查看 {selectedDay.getMonth() + 1}月{selectedDay.getDate()}日 的记录
+                        </Text>
+                    </View>
+                    <TouchableOpacity
+                        style={styles.clearDayButton}
+                        onPress={() => setSelectedDay(null)}
+                    >
+                        <Text style={styles.clearDayText}>查看全月</Text>
+                        <Icon name="close-circle" size={16} color={Colors.textSecondary} />
+                    </TouchableOpacity>
+                </View>
+            )}
 
             {/* ========== ✨ 快捷记账面板 ========== */}
             {quickPanelTemplates.length > 0 && (
@@ -1150,7 +1239,7 @@ export const TransactionListScreen: React.FC = () => {
                 >
                     <View style={styles.filterButtonContent}>
                         <Icon 
-                            name="trending-down" 
+                            name={TransactionIcons.expense} 
                             size={16} 
                             color={filterType === 'EXPENSE' ? Colors.surface : Colors.textSecondary} 
                         />
@@ -1174,7 +1263,7 @@ export const TransactionListScreen: React.FC = () => {
                 >
                     <View style={styles.filterButtonContent}>
                         <Icon 
-                            name="trending-up" 
+                            name={TransactionIcons.income} 
                             size={16} 
                             color={filterType === 'INCOME' ? Colors.surface : Colors.textSecondary} 
                         />
@@ -1388,20 +1477,12 @@ export const TransactionListScreen: React.FC = () => {
                             })}
                         />
                     ) : (
-                        // 分组显示
-                        <FlatList
-                            data={groupedTransactions}
-                            renderItem={({ item: group }) => (
-                                <View key={group.key}>
-                                    {renderGroupHeader(group)}
-                                    {group.transactions.map(transaction => (
-                                        <View key={transaction.id}>
-                                            {renderTransactionItem({ item: transaction })}
-                                        </View>
-                                    ))}
-                                </View>
-                            )}
-                            keyExtractor={item => item.key}
+                        // 分组显示 - 使用 SectionList 优化性能
+                        <SectionList
+                            sections={groupedTransactions}
+                            keyExtractor={(item) => String(item.id)}
+                            renderItem={renderTransactionItem}
+                            renderSectionHeader={({ section: group }) => renderGroupHeader(group)}
                             ListHeaderComponent={renderHeader}
                             ListEmptyComponent={renderEmpty}
                             ListFooterComponent={renderFooter}
@@ -1419,10 +1500,11 @@ export const TransactionListScreen: React.FC = () => {
                             onEndReachedThreshold={0.5}
                             // 性能优化属性
                             removeClippedSubviews={true}
-                            maxToRenderPerBatch={5}
-                            updateCellsBatchingPeriod={100}
-                            initialNumToRender={8}
-                            windowSize={8}
+                            maxToRenderPerBatch={10}
+                            updateCellsBatchingPeriod={50}
+                            initialNumToRender={15}
+                            windowSize={10}
+                            stickySectionHeadersEnabled={false} // 不吸顶，避免遮挡
                         />
                     )}
 
@@ -2056,14 +2138,21 @@ const styles = StyleSheet.create({
     // 第一行：主标题（固定高度）
     titleRow: {
         height: 20,
-        justifyContent: 'center',
+        justifyContent: 'flex-start',
         marginBottom: 4,
+        flexDirection: 'row',
+        alignItems: 'center',
     },
     categoryName: {
         fontSize: FontSizes.md,
         fontWeight: FontWeights.semibold,
         color: Colors.text,
         lineHeight: 20,
+    },
+    // AI 来源标识 - 标题旁的小图标
+    aiTitleBadge: {
+        marginLeft: 4,
+        opacity: 0.5,
     },
     // 第二行容器（固定高度）
     metaRowContainer: {
@@ -2334,6 +2423,40 @@ const styles = StyleSheet.create({
         fontSize: FontSizes.sm,
         color: Colors.primary,
         fontWeight: FontWeights.medium,
+    },
+
+    // ✨ 选中日期提示栏
+    selectedDayBanner: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        backgroundColor: Colors.primary + '10',
+        paddingHorizontal: Spacing.lg,
+        paddingVertical: Spacing.sm,
+        marginBottom: Spacing.md,
+        borderRadius: BorderRadius.lg,
+        borderWidth: 1,
+        borderColor: Colors.primary + '20',
+    },
+    selectedDayInfo: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.xs,
+    },
+    selectedDayText: {
+        fontSize: FontSizes.sm,
+        color: Colors.primary,
+        fontWeight: FontWeights.semibold,
+    },
+    clearDayButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        padding: 4,
+    },
+    clearDayText: {
+        fontSize: FontSizes.xs,
+        color: Colors.textSecondary,
     },
 
     // ========== 侧滑删除样式 ==========

@@ -3,7 +3,6 @@ import { Transaction } from '../../types/transaction';
 
 export interface TransactionResponse {
     id: number;
-    name?: string;
     type: 'EXPENSE' | 'INCOME';
     amount: number;
     categoryId: number;
@@ -11,6 +10,11 @@ export interface TransactionResponse {
     transactionDateTime: string;
     ledgerId?: number;
     createdByUserId?: number;
+    createdByUserName?: string;
+    createdByUserNickname?: string;
+    paymentMethodId?: number;
+    attachmentCount?: number;
+    source?: 'MANUAL' | 'AI'; // 交易来源
 }
 
 export interface TransactionQueryParams {

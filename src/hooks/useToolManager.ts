@@ -8,13 +8,14 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ToolMeta, ALL_TOOLS_META, ToolCategory, groupToolsByCategory } from '../types/tool';
 import { 
-  isToolAlwaysAllowed, 
-  setToolAlwaysAllowed, 
-  removeToolAlwaysAllowed,
-  getAllAlwaysAllowedTools,
-} from '../agent/utils/permissions';
+  ToolMeta, 
+  ALL_TOOLS_META, 
+  ToolCategory, 
+  groupToolsByCategory,
+  getToolActions,
+} from '../types/tool';
+import { toolPermissionStorage } from '../services/toolPermissionStorage';
 
 const STORAGE_KEY = 'agent_tool_settings';
 
@@ -27,15 +28,9 @@ interface ToolSettings {
  * 工具管理 Hook
  */
 export function useToolManager() {
-  // 调试日志
-  console.log('🔧 [useToolManager] Initializing, ALL_TOOLS_META count:', ALL_TOOLS_META?.length);
-  
   // 工具列表状态
   const [tools, setTools] = useState<ToolMeta[]>(() => {
-    // 初始化时，所有工具都启用
-    const initialTools = ALL_TOOLS_META.map(tool => ({ ...tool }));
-    console.log('🔧 [useToolManager] Initial tools:', initialTools.length, initialTools.map(t => t.name));
-    return initialTools;
+    return ALL_TOOLS_META.map(tool => ({ ...tool }));
   });
   
   // 是否已加载
@@ -47,28 +42,51 @@ export function useToolManager() {
   useEffect(() => {
     const loadSettings = async () => {
       try {
+        // 初始化权限存储
+        await toolPermissionStorage.initialize();
+        
         const stored = await AsyncStorage.getItem(STORAGE_KEY);
-        const alwaysAllowedTools = getAllAlwaysAllowedTools();
+        
+        // 获取已授权的工具（从持久化存储）
+        const alwaysAllowedTools = toolPermissionStorage.getAllAlwaysAllowed();
         
         if (stored) {
           const settings: ToolSettings = JSON.parse(stored);
           
           // 应用存储的设置，同时同步"始终允许"状态
-          setTools(prev => prev.map(tool => ({
-            ...tool,
-            // 核心工具始终启用，其他工具根据存储设置
-            isEnabled: tool.isCore || settings.enabledTools.includes(tool.name),
-            // 同步"始终允许"状态
-            isAlwaysAllowed: alwaysAllowedTools.includes(tool.name),
-          })));
-          
-          console.log('📋 [useToolManager] Loaded tool settings:', settings.enabledTools.length, 'tools enabled');
+          setTools(prev => prev.map(tool => {
+            const isAlwaysAllowed = alwaysAllowedTools.includes(tool.name) ||
+              (tool.actions?.some(action => 
+                alwaysAllowedTools.includes(`${tool.name}.${action.name}`)
+              ) ?? false);
+            
+            return {
+              ...tool,
+              isEnabled: tool.isCore || settings.enabledTools.includes(tool.name),
+              isAlwaysAllowed,
+              actions: tool.actions?.map(action => ({
+                ...action,
+                isAlwaysAllowed: alwaysAllowedTools.includes(`${tool.name}.${action.name}`),
+              })),
+            };
+          }));
         } else {
-          // 即使没有存储设置，也要同步"始终允许"状态
-          setTools(prev => prev.map(tool => ({
-            ...tool,
-            isAlwaysAllowed: alwaysAllowedTools.includes(tool.name),
-          })));
+          // 同步"始终允许"状态
+          setTools(prev => prev.map(tool => {
+            const isAlwaysAllowed = alwaysAllowedTools.includes(tool.name) ||
+              (tool.actions?.some(action => 
+                alwaysAllowedTools.includes(`${tool.name}.${action.name}`)
+              ) ?? false);
+            
+            return {
+              ...tool,
+              isAlwaysAllowed,
+              actions: tool.actions?.map(action => ({
+                ...action,
+                isAlwaysAllowed: alwaysAllowedTools.includes(`${tool.name}.${action.name}`),
+              })),
+            };
+          }));
         }
       } catch (error) {
         console.error('❌ [useToolManager] Failed to load settings:', error);
@@ -90,7 +108,6 @@ export function useToolManager() {
         version: 1,
       };
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-      console.log('💾 [useToolManager] Saved tool settings');
     } catch (error) {
       console.error('❌ [useToolManager] Failed to save settings:', error);
     }
@@ -103,39 +120,11 @@ export function useToolManager() {
     setTools(prev => {
       const updated = prev.map(tool => {
         if (tool.name === toolName) {
-          // 核心工具不能禁用
-          if (tool.isCore) {
-            console.log('⚠️ [useToolManager] Cannot disable core tool:', toolName);
-            return tool;
-          }
+          if (tool.isCore) return tool; // 核心工具不能禁用
           return { ...tool, isEnabled: !tool.isEnabled };
         }
         return tool;
       });
-      
-      // 异步保存
-      saveSettings(updated);
-      
-      return updated;
-    });
-  }, [saveSettings]);
-
-  /**
-   * 设置工具启用状态
-   */
-  const setToolEnabled = useCallback((toolName: string, enabled: boolean) => {
-    setTools(prev => {
-      const updated = prev.map(tool => {
-        if (tool.name === toolName) {
-          // 核心工具始终启用
-          if (tool.isCore && !enabled) {
-            return tool;
-          }
-          return { ...tool, isEnabled: enabled };
-        }
-        return tool;
-      });
-      
       saveSettings(updated);
       return updated;
     });
@@ -148,15 +137,11 @@ export function useToolManager() {
     setTools(prev => {
       const updated = prev.map(tool => {
         if (tool.category === category) {
-          // 核心工具始终启用
-          if (tool.isCore && !enabled) {
-            return tool;
-          }
+          if (tool.isCore && !enabled) return tool;
           return { ...tool, isEnabled: enabled };
         }
         return tool;
       });
-      
       saveSettings(updated);
       return updated;
     });
@@ -165,87 +150,107 @@ export function useToolManager() {
   /**
    * 重置所有工具为默认状态
    */
-  const resetToDefault = useCallback(() => {
+  const resetToDefault = useCallback(async () => {
     const defaultTools = ALL_TOOLS_META.map(tool => ({ 
       ...tool, 
       isEnabled: true,
-      isAlwaysAllowed: false, 
+      isAlwaysAllowed: false,
+      actions: tool.actions?.map(action => ({
+        ...action,
+        isAlwaysAllowed: false,
+      })),
     }));
     setTools(defaultTools);
     saveSettings(defaultTools);
-    
-    // 同时清除所有"始终允许"设置
-    const alwaysAllowedTools = getAllAlwaysAllowedTools();
-    alwaysAllowedTools.forEach(toolName => {
-      removeToolAlwaysAllowed(toolName);
-    });
-    
-    console.log('🔄 [useToolManager] Reset all tools to default');
+    await toolPermissionStorage.resetAll();
   }, [saveSettings]);
 
   /**
    * 切换工具的"始终允许"状态
-   * @param toolName 工具名称
+   * @param toolName 工具名称（可以是 "toolName" 或 "toolName.action" 格式）
    * @param allowed 是否始终允许
    */
-  const toggleAlwaysAllowed = useCallback((toolName: string, allowed: boolean) => {
+  const toggleAlwaysAllowed = useCallback(async (toolName: string, allowed: boolean) => {
+    // 持久化到存储
     if (allowed) {
-      setToolAlwaysAllowed(toolName);
+      await toolPermissionStorage.setAlwaysAllowed(toolName);
     } else {
-      removeToolAlwaysAllowed(toolName);
+      await toolPermissionStorage.removeAlwaysAllowed(toolName);
     }
     
-    // 更新本地状态
+    const parts = toolName.split('.');
+    const isSubAction = parts.length === 2;
+    
     setTools(prev => prev.map(tool => {
-      if (tool.name === toolName) {
-        return { ...tool, isAlwaysAllowed: allowed };
+      if (isSubAction) {
+        if (tool.name === parts[0] && tool.actions) {
+          const updatedActions = tool.actions.map(action => {
+            if (action.name === parts[1]) {
+              return { ...action, isAlwaysAllowed: allowed };
+            }
+            return action;
+          });
+          const allActionsAllowed = updatedActions.every(a => a.isAlwaysAllowed);
+          return { ...tool, actions: updatedActions, isAlwaysAllowed: allActionsAllowed };
+        }
+      } else {
+        if (tool.name === toolName) {
+          const updatedActions = tool.actions?.map(action => ({
+            ...action,
+            isAlwaysAllowed: allowed,
+          }));
+          if (!allowed && tool.actions) {
+            tool.actions.forEach(action => {
+              toolPermissionStorage.removeAlwaysAllowed(`${tool.name}.${action.name}`);
+            });
+          }
+          return { ...tool, isAlwaysAllowed: allowed, actions: updatedActions };
+        }
       }
       return tool;
     }));
-    
-    console.log(`🔐 [useToolManager] Tool "${toolName}" always allowed: ${allowed}`);
   }, []);
 
   /**
    * 刷新"始终允许"状态
-   * 用于同步来自其他地方的状态变更
    */
-  const refreshAlwaysAllowedStatus = useCallback(() => {
-    const alwaysAllowedTools = getAllAlwaysAllowedTools();
-    setTools(prev => prev.map(tool => ({
-      ...tool,
-      isAlwaysAllowed: alwaysAllowedTools.includes(tool.name),
-    })));
+  const refreshAlwaysAllowedStatus = useCallback(async () => {
+    await toolPermissionStorage.initialize();
+    const alwaysAllowedTools = toolPermissionStorage.getAllAlwaysAllowed();
+    
+    setTools(prev => prev.map(tool => {
+      const isAlwaysAllowed = alwaysAllowedTools.includes(tool.name) ||
+        (tool.actions?.some(action => 
+          alwaysAllowedTools.includes(`${tool.name}.${action.name}`)
+        ) ?? false);
+      
+      return {
+        ...tool,
+        isAlwaysAllowed,
+        actions: tool.actions?.map(action => ({
+          ...action,
+          isAlwaysAllowed: alwaysAllowedTools.includes(`${tool.name}.${action.name}`),
+        })),
+      };
+    }));
   }, []);
 
-  /**
-   * 获取启用的工具名称列表
-   */
+  // 启用的工具名称列表
   const enabledToolNames = useMemo(() => {
     return tools.filter(t => t.isEnabled).map(t => t.name);
   }, [tools]);
 
-  /**
-   * 按分类分组的工具
-   */
+  // 按分类分组的工具
   const toolsByCategory = useMemo(() => {
-    const result = groupToolsByCategory(tools);
-    console.log('🔧 [useToolManager] toolsByCategory computed:', {
-      context: result.context?.length || 0,
-      api: result.api?.length || 0,
-      transaction: result.transaction?.length || 0,
-      render: result.render?.length || 0,
-    });
-    return result;
+    return groupToolsByCategory(tools);
   }, [tools]);
 
-  /**
-   * 统计信息
-   */
+  // 统计信息
   const stats = useMemo(() => {
     const enabled = tools.filter(t => t.isEnabled).length;
     const total = tools.length;
     const core = tools.filter(t => t.isCore).length;
+    const authorized = tools.filter(t => t.isAlwaysAllowed).length;
     
     return {
       enabled,
@@ -253,6 +258,7 @@ export function useToolManager() {
       core,
       optional: total - core,
       enabledOptional: enabled - core,
+      authorized,
     };
   }, [tools]);
 
@@ -263,10 +269,10 @@ export function useToolManager() {
     stats,
     isLoaded,
     toggleTool,
-    setToolEnabled,
     toggleCategory,
     resetToDefault,
     toggleAlwaysAllowed,
     refreshAlwaysAllowedStatus,
+    getToolActions,
   };
 }
