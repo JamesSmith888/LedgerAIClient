@@ -125,6 +125,8 @@ const SetupStepCard: React.FC<{
   </View>
 );
 
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
 export const APIKeyGuide: React.FC<APIKeyGuideProps> = ({
   visible,
   onClose,
@@ -132,6 +134,7 @@ export const APIKeyGuide: React.FC<APIKeyGuideProps> = ({
   allowSkip = false,
 }) => {
   const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets();
   
   // 当前步骤索引
   const [currentStep, setCurrentStep] = useState(0);
@@ -339,11 +342,11 @@ export const APIKeyGuide: React.FC<APIKeyGuideProps> = ({
   return (
     <Modal
       visible={visible}
-      animationType="fade"
-      transparent={true}
+      animationType="slide"
+      transparent={false}
       onRequestClose={allowSkip ? onClose : undefined}
     >
-      <View style={styles.overlay}>
+      <View style={[styles.overlay, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
         <Animated.View 
           style={[
             styles.container,
@@ -427,21 +430,22 @@ export const APIKeyGuide: React.FC<APIKeyGuideProps> = ({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
+    backgroundColor: Colors.surface, // 全屏背景色
+    justifyContent: 'flex-start', // 从顶部开始
     alignItems: 'center',
-    paddingHorizontal: 16,
+    paddingHorizontal: 0, // 移除水平内边距
   },
   container: {
     width: '100%',
-    maxWidth: 400,
-    minHeight: 450,
-    maxHeight: '90%',
+    height: '100%', // 全屏高度
+    maxWidth: '100%', // 全屏宽度
+    minHeight: '100%',
+    maxHeight: '100%',
     backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.xl,
+    borderRadius: 0, // 移除圆角
     paddingTop: Spacing.md,
     paddingBottom: Spacing.md,
-    ...Shadows.xl,
+    // 移除阴影，因为是全屏
   },
   
   // 头部

@@ -7,6 +7,7 @@ import { HumanMessage, AIMessage, BaseMessage, ToolMessage, SystemMessage } from
 import { allRenderTools } from "./tools/renderTools";
 import { domainTools } from "./tools/domainTools";
 import { memoryTools } from "./tools/memoryTools";
+import { budgetTools } from "./tools/budgetTools";
 import type { AgentRuntimeContext } from "../types/agent";
 import { 
   withRetry, 
@@ -77,6 +78,15 @@ export interface StatefulAgentOptions {
     confirmHighRisk?: boolean;
     confirmMediumRisk?: boolean;
     batchThreshold?: number;
+    /** 意图改写器的置信度阈值配置 */
+    intentRewriterConfidenceThresholds?: {
+      high?: number;
+      low?: number;
+    };
+    /** 反思器的置信度阈值配置 */
+    reflectorConfidenceThresholds?: {
+      low?: number;
+    };
   };
   /** 模型配置（可选，用于支持不同模块使用不同模型和提供商） */
   modelConfig?: {
@@ -130,8 +140,8 @@ export interface AgentStepEvent {
 
 // ============ 工具集 ============
 
-// 领域聚合工具集（领域工具 + 记忆工具 + 渲染工具）
-const allTools = [...domainTools, ...memoryTools, ...allRenderTools];
+// 领域聚合工具集（领域工具 + 记忆工具 + 渲染工具 + 预算工具）
+const allTools = [...domainTools, ...memoryTools, ...allRenderTools, ...budgetTools];
 
 /**
  * 过滤启用的工具
@@ -160,11 +170,16 @@ function buildSystemPrompt(context?: AgentRuntimeContext, _tools?: any[]): strin
 ## 行为规范
 
 1. **遵循任务指令**：如果下方有"当前任务"部分，必须严格按照任务描述执行，不要自行重新解读用户意图
-2. **工具调用**：根据任务需要选择合适的工具，严格按照工具的 schema 定义传参
-3. **优先使用上下文**：优先使用下方提供的上下文信息，避免重复查询
-4. **渲染结果**：业务操作完成后，调用渲染工具将结果展示给用户
-5. **确认敏感操作**：高风险操作需要用户确认
-6. **学习用户偏好**：当用户纠正你的理解时，使用记忆工具记录，以便下次更好地服务用户`;
+2. **行动而非描述**：收到任务后，立即调用工具执行，不要只是描述你将要做什么
+3. **工具调用**：根据任务需要选择合适的工具，严格按照工具的 schema 定义传参
+4. **优先使用上下文**：优先使用下方提供的上下文信息，避免重复查询
+5. **渲染结果**：业务操作完成后，调用渲染工具将结果展示给用户
+6. **确认敏感操作**：高风险操作需要用户确认
+7. **学习用户偏好**：当用户纠正你的理解时，使用记忆工具记录，以便下次更好地服务用户
+8. **💡 智能建议（重要）**：在调用渲染工具时，**必须**通过 suggestedActions 参数提供 2-4 个后续操作建议
+   - ❌ 错误：在消息文本中写"智能建议：1. xxx 2. xxx"
+   - ✅ 正确：在渲染工具的 suggestedActions 参数中传入数组：[{label: "xxx", message: "xxx"}, ...]
+   - 建议应该具体、可操作，帮助用户快速完成相关任务`;
 
   // 如果没有上下文，直接返回基础提示词
   if (!context) {
@@ -252,7 +267,7 @@ export function createStatefulAgent(apiKey: string, options?: StatefulAgentOptio
     logLevel,
     enableIntentRewriting = true,  // 默认启用意图改写
     enableConfirmation = true,
-    enableReflection = false,  // 默认关闭反思模式
+    enableReflection = true,  // 默认启用反思模式（ReAct 核心特性）
     reflectorConfig,
     userPreferences,
     modelConfig,
@@ -287,6 +302,7 @@ export function createStatefulAgent(apiKey: string, options?: StatefulAgentOptio
     batchThreshold: userPreferences?.batchThreshold ?? 5,
     model: intentRewriterModelName,
     provider: intentRewriterProvider,  // 使用配置的提供商
+    confidenceThresholds: userPreferences?.intentRewriterConfidenceThresholds,  // 传入置信度阈值配置
   });
   
   // 初始化意图改写器
@@ -303,6 +319,7 @@ export function createStatefulAgent(apiKey: string, options?: StatefulAgentOptio
     availableTools: tools,  // 动态注入可用工具列表
     model: reflectorModelName,
     provider: reflectorProvider,  // 使用配置的提供商
+    confidenceThresholds: userPreferences?.reflectorConfidenceThresholds,  // 传入置信度阈值配置
   });
   
   // 初始化反思器
@@ -1006,6 +1023,15 @@ export function createStatefulAgent(apiKey: string, options?: StatefulAgentOptio
             console.log(`      Args: ${JSON.stringify(tc.args)}`);
           });
         }
+        // 检查是否有停止信号（不同提供商的停止信号可能不同）
+        const stopSignals = [
+          (aiMsgPreview as any)?.response_metadata?.finish_reason,
+          (aiMsgPreview as any)?.additional_kwargs?.finish_reason,
+          (aiMsgPreview as any)?.lc_kwargs?.additional_kwargs?.finish_reason,
+        ].filter(Boolean);
+        if (stopSignals.length > 0) {
+          console.log('📥 [StatefulAgent] Stop Signals:', stopSignals);
+        }
         console.log('📥 [StatefulAgent] ========== LLM RESPONSE END ==========');
 
         // 检查响应是否有效
@@ -1034,8 +1060,8 @@ export function createStatefulAgent(apiKey: string, options?: StatefulAgentOptio
             emptyResponseRetryCount++;
             
             if (emptyResponseRetryCount > maxEmptyRetries) {
-              // 达到最大重试次数，尝试自动渲染
-              console.warn(`⚠️ [StatefulAgent] Max empty response retries (${maxEmptyRetries}) reached, attempting auto-render`);
+              // 达到最大重试次数，检查任务状态
+              console.warn(`⚠️ [StatefulAgent] Max empty response retries (${maxEmptyRetries}) reached, checking task status`);
               
               // 检查是否有已完成的业务操作
               const businessOps = completedStepObservations.filter(
@@ -1043,13 +1069,20 @@ export function createStatefulAgent(apiKey: string, options?: StatefulAgentOptio
               );
               
               if (businessOps.length > 0) {
-                // 找到最后一个成功的业务操作，尝试自动渲染
                 const lastOp = businessOps[businessOps.length - 1];
-                console.log(`🔧 [StatefulAgent] Auto-rendering result for: ${lastOp.toolName}`);
                 
                 try {
                   // 解析操作结果
                   const opResult = JSON.parse(lastOp.result);
+                  
+                  // 检查是否只是查询操作（需要继续执行修改）
+                  if (lastOp.toolName === 'transaction' && lastOp.toolArgs?.action === 'query') {
+                    console.warn('⚠️ [StatefulAgent] Last operation was a query, task not complete yet');
+                    throw new Error('AI 模型在查询后停止响应，请稍后重试');
+                  }
+                  
+                  // 不是查询操作，尝试自动渲染
+                  console.log(`🔧 [StatefulAgent] Auto-rendering result for: ${lastOp.toolName}`);
                   
                   if (opResult.success && opResult.data) {
                     const responseData = opResult.data.data || opResult.data;
@@ -1077,6 +1110,7 @@ export function createStatefulAgent(apiKey: string, options?: StatefulAgentOptio
                   }
                 } catch (parseError) {
                   console.warn('⚠️ [StatefulAgent] Failed to parse operation result for auto-render:', parseError);
+                  throw parseError;
                 }
                 
                 // 通知用户操作已完成
@@ -1092,41 +1126,69 @@ export function createStatefulAgent(apiKey: string, options?: StatefulAgentOptio
               }
             }
             
-            // 还没渲染，注入提示让模型继续渲染
-            console.log(`⚠️ [StatefulAgent] No render yet, prompting LLM to render result (attempt ${emptyResponseRetryCount}/${maxEmptyRetries})`);
+            // 还没渲染，检查任务类型和进度
+            console.log(`⚠️ [StatefulAgent] No render yet, analyzing task progress (attempt ${emptyResponseRetryCount}/${maxEmptyRetries})`);
             
-            // 构建更具体的渲染提示，包含最后一次操作的结果
+            // 分析最后一次操作
             const lastBusinessOp = completedStepObservations
               .filter(obs => obs.success && obs.toolName && !obs.toolName.startsWith('render_'))
               .pop();
             
-            let renderHint = '';
+            let promptContent = '';
+            
             if (lastBusinessOp) {
               try {
                 const result = JSON.parse(lastBusinessOp.result);
-                if (result.success && result.data) {
-                  const data = result.data.data || result.data;
-                  if (lastBusinessOp.toolName === 'transaction' && data.id) {
-                    renderHint = `\n\n请调用 render_transaction_detail 工具，传入以下交易数据：${JSON.stringify(data)}`;
-                  } else if (lastBusinessOp.toolName === 'query' && Array.isArray(data)) {
-                    renderHint = `\n\n请调用 render_transaction_list 工具，传入 transactions 参数为上述查询结果。`;
+                
+                // 检查是否是查询操作（修改/删除任务的第一步）
+                if (lastBusinessOp.toolName === 'transaction' && result.success) {
+                  const action = lastBusinessOp.toolArgs?.action;
+                  
+                  // 如果是查询操作，且任务类型是修改/删除，说明还需要继续执行
+                  if (action === 'query') {
+                    const transactions = result.transactions || (result.data?.data);
+                    
+                    if (Array.isArray(transactions) && transactions.length > 0) {
+                      promptContent = `[系统提示] 你刚才查询到了 ${transactions.length} 条记录。
+
+**重要**：这只是第一步！根据用户的任务要求，你还需要：
+1. 从查询结果中选择正确的记录
+2. 调用 transaction 工具执行修改操作（action: "update"）
+3. 最后调用渲染工具展示结果
+
+请继续执行下一步操作！不要停在查询步骤。`;
+                    } else {
+                      promptContent = `[系统提示] 查询没有找到匹配的记录。请调用 render_message 工具告知用户未找到相关记录。`;
+                    }
+                  } else {
+                    // 创建/修改/删除操作已完成，需要渲染
+                    const data = result.data?.data || result.data;
+                    if (data && data.id) {
+                      promptContent = `[系统提示] 操作已完成，请立即调用 render_transaction_detail 工具展示结果。
+
+交易数据：${JSON.stringify(data)}`;
+                    } else {
+                      promptContent = `[系统提示] 操作已完成，请调用合适的渲染工具展示结果。`;
+                    }
                   }
+                } else {
+                  // 其他操作，需要渲染
+                  promptContent = `[系统提示] 业务操作已完成，请调用渲染工具展示结果：
+- 单条记录：render_transaction_detail
+- 多条记录：render_transaction_list
+- 统计分析：render_statistics_card`;
                 }
-              } catch {
-                // 解析失败，使用通用提示
+              } catch (parseError) {
+                console.warn('⚠️ [StatefulAgent] Failed to parse last operation result:', parseError);
+                promptContent = `[系统提示] 请根据任务要求继续执行或调用渲染工具展示结果。`;
               }
+            } else {
+              promptContent = `[系统提示] 请继续执行任务或调用渲染工具展示结果。`;
             }
             
             currentMessages.push(
               new HumanMessage({
-                content: `[系统提示] 你刚才完成了业务操作，但还没有将结果展示给用户。
-
-根据工具调用流程规范，你**必须**调用渲染工具完成任务：
-- 如果是创建/修改单条记录：调用 render_transaction_detail
-- 如果是查询多条记录：调用 render_transaction_list
-- 如果是统计分析：调用 render_statistics_card
-
-请立即调用合适的渲染工具！${renderHint}`,
+                content: promptContent,
               })
             );
             // 不 break，继续循环让 LLM 调用渲染工具
@@ -1153,6 +1215,55 @@ export function createStatefulAgent(apiKey: string, options?: StatefulAgentOptio
         if (textContent.trim() && !isFunctionCallJson(textContent)) {
           if (aiMessage.tool_calls && aiMessage.tool_calls.length > 0) {
             callbacks?.onStep?.({ type: 'thinking', content: textContent });
+          }
+        }
+
+        // ============ 检测是否为重复的渲染工具调用（表示任务已完成） ============
+        if (aiMessage.tool_calls && aiMessage.tool_calls.length > 0) {
+          // 检查是否所有的 tool calls 都是渲染工具
+          const allRenderTools = aiMessage.tool_calls.every(tc => tc.name.startsWith('render_'));
+          
+          if (allRenderTools) {
+            // 检查这些渲染工具是否已经被调用过（检查最近3次调用）
+            const recentRenderCalls = completedStepObservations
+              .slice(-3)  // 只看最近3次
+              .filter(obs => obs.toolName?.startsWith('render_'));
+            
+            // 检查当前要调用的渲染工具是否与最近的渲染调用重复
+            const isRepeatRenderCall = aiMessage.tool_calls.every(tc => {
+              return recentRenderCalls.some(obs => {
+                if (obs.toolName !== tc.name) return false;
+                
+                // 简单比较：如果工具名相同且参数的 id 相同（如果有），则认为是重复
+                try {
+                  const obsArgs = obs.toolArgs || {};
+                  const tcArgs = tc.args || {};
+                  
+                  // 如果有 id 字段，比较 id
+                  if (obsArgs.id !== undefined && tcArgs.id !== undefined) {
+                    return obsArgs.id === tcArgs.id;
+                  }
+                  
+                  // 否则认为渲染工具重复调用就是重复（因为数据不会变）
+                  return true;
+                } catch {
+                  return false;
+                }
+              });
+            });
+            
+            if (isRepeatRenderCall) {
+              console.log('🔄 [StatefulAgent] Detected repeated render tool calls, task is complete');
+              stateMachine.transition(AgentState.SUMMARIZING);
+              callbacks?.onStateChange?.(AgentState.EXECUTING, AgentState.SUMMARIZING);
+              
+              stateMachine.transition(AgentState.COMPLETED);
+              callbacks?.onStateChange?.(AgentState.SUMMARIZING, AgentState.COMPLETED);
+              
+              logger.agentEnd({ success: true, finalMessageCount: currentMessages.length });
+              console.log('✅ [StatefulAgent] Completed (repeated render detected)');
+              break;
+            }
           }
         }
 
@@ -1191,7 +1302,23 @@ export function createStatefulAgent(apiKey: string, options?: StatefulAgentOptio
               // 不 break，继续循环让 LLM 调用渲染工具
               continue;
             } else {
-              // 没有业务结果，可能是查询或对话，直接结束
+              // 没有业务结果，检查是否是第一轮且有明确任务
+              const isFirstIteration = iterations === 1;
+              const hasTaskIntent = currentRewrittenIntent && 
+                ['create', 'update', 'delete', 'query', 'statistics', 'batch'].includes(currentRewrittenIntent.intentType);
+              
+              if (isFirstIteration && hasTaskIntent) {
+                // 第一轮有任务但没调用工具，提示重新思考
+                console.warn('⚠️ [StatefulAgent] First iteration with task intent but no tool calls');
+                currentMessages.push(
+                  new HumanMessage({
+                    content: '[系统] 请根据任务指令调用相应的工具执行操作。',
+                  })
+                );
+                continue;
+              }
+              
+              // 可能是普通对话，直接结束
               stateMachine.transition(AgentState.SUMMARIZING);
               callbacks?.onStateChange?.(AgentState.EXECUTING, AgentState.SUMMARIZING);
               
@@ -1218,7 +1345,57 @@ export function createStatefulAgent(apiKey: string, options?: StatefulAgentOptio
             toolArgs: toolCall.args,
           });
 
-          const result = await executeToolWithPermissionCheck(toolCall, callbacks);
+          // ============ 循环检测：检查是否重复调用相同的工具和参数 ============
+          const isRepeatedCall = completedStepObservations.some(obs => 
+            obs.toolName === toolCall.name && 
+            JSON.stringify(obs.toolArgs) === JSON.stringify(toolCall.args)
+          );
+
+          let result;
+          if (isRepeatedCall) {
+            console.warn(`⚠️ [StatefulAgent] Detected repeated tool call: ${toolCall.name}`);
+            
+            // 检查是否已经多次触发重复调用警告（防止死循环）
+            const repeatedWarnings = completedStepObservations.filter(obs => 
+              obs.result && obs.result.includes('[系统错误] 禁止重复调用')
+            ).length;
+
+            if (repeatedWarnings >= 2) {
+              console.error('🛑 [StatefulAgent] Too many repeated calls, forcing termination');
+              
+              // 强制结束任务
+              stateMachine.transition(AgentState.SUMMARIZING);
+              callbacks?.onStateChange?.(AgentState.EXECUTING, AgentState.SUMMARIZING);
+              
+              stateMachine.transition(AgentState.COMPLETED);
+              callbacks?.onStateChange?.(AgentState.SUMMARIZING, AgentState.COMPLETED);
+              
+              logger.agentEnd({ success: false, finalMessageCount: currentMessages.length });
+              
+              // 返回最后一条消息给用户
+              yield {
+                messages: [
+                  ...currentMessages,
+                  new AIMessage({ content: '❌ 检测到多次重复操作，任务已强制终止。请尝试提供更详细的信息或稍后重试。' })
+                ],
+                state: AgentState.COMPLETED 
+              };
+              break;
+            }
+
+            result = {
+              success: false,
+              error: `[系统错误] 禁止重复调用！你刚才已经用完全相同的参数调用过工具 "${toolCall.name}" 了。
+参数: ${JSON.stringify(toolCall.args)}
+
+**严重警告**：你正在陷入死循环！
+1. **立即停止**尝试这个操作
+2. 如果是查询失败，请直接询问用户补充信息
+3. 不要重试相同的参数！`
+            };
+          } else {
+            result = await executeToolWithPermissionCheck(toolCall, callbacks);
+          }
 
           const toolDuration = Date.now() - toolStartTime;
 

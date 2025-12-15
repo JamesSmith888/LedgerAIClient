@@ -26,6 +26,7 @@ export { CreateLedgerScreen } from './CreateLedgerScreen';
 export { InviteMemberScreen } from './InviteMemberScreen';
 export { AcceptInviteScreen } from './AcceptInviteScreen';
 export { JoinByCodeScreen } from './JoinByCodeScreen';
+export { BudgetSettingScreen } from './BudgetSettingScreen';
 
 // 支付方式相关页面
 export { PaymentMethodManagementScreen } from './PaymentMethodManagementScreen';
@@ -47,3 +48,4 @@ export { DataExportScreen } from './DataExportScreen';
 export { APIKeySettingsScreen } from './APIKeySettingsScreen';
 export { DataStorageSettingsScreen } from './DataStorageSettingsScreen';
 export { UserPreferenceMemoryScreen } from './UserPreferenceMemoryScreen';
+export { AgentConfigScreen } from './AgentConfigScreen';

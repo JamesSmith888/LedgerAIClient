@@ -12,6 +12,8 @@ import { NavigationContainer } from '@react-navigation/native';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
+import { AgentProvider } from './src/context/AgentContext';
+import { AgentFloatingButton } from './src/components/agent/AgentFloatingButton';
 import { BottomTabNavigator } from './src/navigation/BottomTabNavigator';
 import {
   AddTransactionScreen,
@@ -33,6 +35,8 @@ import {
   APIKeySettingsScreen,
   DataStorageSettingsScreen,
   UserPreferenceMemoryScreen,
+  AgentConfigScreen,
+  BudgetSettingScreen,
 } from './src/screens';
 import { InviteMemberScreen } from './src/screens/InviteMemberScreen';
 import { EditProfileScreen } from './src/screens/EditProfileScreen';
@@ -97,6 +101,10 @@ const MainNavigator = () => {
       <MainStack.Screen
         name="LedgerDetail"
         component={LedgerDetailScreen}
+      />
+      <MainStack.Screen
+        name="BudgetSetting"
+        component={BudgetSettingScreen}
       />
       <MainStack.Screen
         name="CreateLedger"
@@ -174,6 +182,10 @@ const MainNavigator = () => {
         name="UserPreferenceMemory"
         component={UserPreferenceMemoryScreen}
       />
+      <MainStack.Screen
+        name="AgentConfig"
+        component={AgentConfigScreen}
+      />
 
       {/* 其他全屏页面 */}
     </MainStack.Navigator>
@@ -206,12 +218,15 @@ function App() {
             <CategoryProvider>
               <PaymentMethodProvider>
                 <TemplateProvider>
-                  <NavigationContainer>
-                    <StatusBar barStyle="dark-content" backgroundColor="#F2F2F7" />
-                    <AppNavigator />
-                    {/* 网络调试器 - 点击右下角🐛图标查看 */}
-                    {/*<NetworkDebugger />*/}
-                  </NavigationContainer>
+                  <AgentProvider>
+                    <NavigationContainer>
+                      <StatusBar barStyle="dark-content" backgroundColor="#F2F2F7" />
+                      <AppNavigator />
+                      <AgentFloatingButton />
+                      {/* 网络调试器 - 点击右下角🐛图标查看 */}
+                      {/*<NetworkDebugger />*/}
+                    </NavigationContainer>
+                  </AgentProvider>
                 </TemplateProvider>
               </PaymentMethodProvider>
             </CategoryProvider>

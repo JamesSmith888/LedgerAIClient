@@ -9,6 +9,7 @@ import {
     Modal,
     Pressable,
     RefreshControl,
+    ScrollView,
     SectionList,
     StyleSheet,
     Text,
@@ -47,6 +48,9 @@ import { CategoryIcon } from '../components/common/CategoryIcon';
 import { MonthPickerSheet } from '../components/transaction/MonthPickerSheet';
 import { DailyStatisticsCalendar } from '../components/transaction/DailyStatisticsCalendar';
 import { CollapsibleSearchBar } from '../components/transaction/SearchBar';
+import { BudgetProgressCard } from '../components/budget/BudgetProgressCard';
+import { budgetAPI } from '../api/services/budgetAPI';
+import { BudgetOverview } from '../types/budget';
 import Swipeable from 'react-native-gesture-handler/Swipeable';
 import { usePaymentMethod } from '../context/PaymentMethodContext';
 import { PaymentIcon } from '../components/payment/PaymentIcon';
@@ -206,6 +210,11 @@ export const TransactionListScreen: React.FC = () => {
         totalCount: 0,
     });
 
+    // ========== 预算数据状态 ==========
+    const [budgetOverview, setBudgetOverview] = useState<BudgetOverview | null>(null);
+    const [budgetLoading, setBudgetLoading] = useState<boolean>(false);
+    const [budgetVisible, setBudgetVisible] = useState<boolean>(false); // 预算折叠/展开状态
+
     // 排序相关状态
     const [sortField, setSortField] = useState<SortField>('transactionDateTime');
     const [sortDirection, setSortDirection] = useState<SortDirection>('DESC');
@@ -236,6 +245,23 @@ export const TransactionListScreen: React.FC = () => {
     // 记录当前打开的 Swipeable引用，用于自动关闭
     const swipeableRefs = useMemo(() => new Map<number, Swipeable>(), []);
 
+    // ========== 明细弹窗相关状态 ==========
+    const [detailModalVisible, setDetailModalVisible] = useState<boolean>(false);
+    const [detailModalType, setDetailModalType] = useState<'EXPENSE' | 'INCOME'>('EXPENSE');
+    const [detailModalLoading, setDetailModalLoading] = useState<boolean>(false);
+    const [detailModalData, setDetailModalData] = useState<{
+        totalAmount: number;
+        categories: Array<{
+            categoryId: number;
+            categoryName: string;
+            icon: string;
+            color: string;
+            amount: number;
+            count: number;
+            percentage: number;
+        }>;
+    } | null>(null);
+
     // 处理删除点击
     const handleDeletePress = (transaction: Transaction) => {
         setDeletingTransaction(transaction);
@@ -265,6 +291,45 @@ export const TransactionListScreen: React.FC = () => {
         }
     };
 
+    // 打开明细弹窗
+    const handleOpenDetail = async (type: 'EXPENSE' | 'INCOME') => {
+        setDetailModalType(type);
+        setDetailModalVisible(true);
+        setDetailModalLoading(true);
+        setDetailModalData(null);
+
+        try {
+            // 计算时间范围（当前选中的月份）
+            const year = selectedMonth.getFullYear();
+            const month = String(selectedMonth.getMonth() + 1).padStart(2, '0');
+            
+            // 月份的第一天 00:00:00（ISO 8601 格式）
+            const startTime = `${year}-${month}-01T00:00:00`;
+            
+            // 月份的最后一天 23:59:59（ISO 8601 格式）
+            const lastDay = new Date(year, parseInt(month), 0).getDate();
+            const endTime = `${year}-${month}-${String(lastDay).padStart(2, '0')}T23:59:59`;
+
+            // 调用后端接口获取完整的分类汇总
+            const data = await transactionAPI.getCategorySummary(
+                filterLedger?.id || null,
+                startTime,
+                endTime,
+                type
+            );
+
+            setDetailModalData({
+                totalAmount: data.totalAmount,
+                categories: data.categories
+            });
+        } catch (error) {
+            console.error('获取分类汇总失败:', error);
+            toast.error('获取分类汇总失败');
+        } finally {
+            setDetailModalLoading(false);
+        }
+    };
+
     // ========== 数据加载 ==========
     useFocusEffect(
         useCallback(() => {
@@ -274,6 +339,7 @@ export const TransactionListScreen: React.FC = () => {
             if (!searchKeyword) {
                 loadMonthlyStatistics();
                 loadMonthlySummary();
+                loadBudgetOverview();
             }
         }, [filterType, filterLedger, selectedMonth, selectedDay, sortField, sortDirection, searchKeyword]) // 当筛选条件、月份、日期、排序或搜索关键词变化时重新加载
     );
@@ -293,6 +359,15 @@ export const TransactionListScreen: React.FC = () => {
         if (!paymentMethodId) return undefined;
         return paymentMethods.find(p => p.id === paymentMethodId);
     }
+
+    // 获取预算状态颜色
+    const getBudgetStatusColor = (status: string) => {
+        switch (status) {
+            case 'EXCEEDED': return Colors.error;
+            case 'WARNING': return Colors.warning;
+            default: return Colors.primary;
+        }
+    };
 
 
     // 加载交易记录
@@ -414,6 +489,29 @@ export const TransactionListScreen: React.FC = () => {
         }
     };
 
+    // ========== 加载预算数据 ==========
+    const loadBudgetOverview = async () => {
+        // 如果没有选择账本，不加载预算
+        if (!filterLedger?.id) {
+            setBudgetOverview(null);
+            setBudgetLoading(false);
+            return;
+        }
+
+        setBudgetLoading(true);
+        try {
+            const year = selectedMonth.getFullYear();
+            const month = selectedMonth.getMonth() + 1;
+            const budget = await budgetAPI.getBudgetOverview(filterLedger.id, year, month);
+            setBudgetOverview(budget);
+        } catch (error) {
+            // 预算未设置或加载失败时，设置为 null
+            setBudgetOverview(null);
+        } finally {
+            setBudgetLoading(false);
+        }
+    };
+
     // 下拉刷新
     const onRefresh = async () => {
         setIsRefreshing(true);
@@ -424,6 +522,7 @@ export const TransactionListScreen: React.FC = () => {
             refreshCategories(),  // 刷新分类数据
             loadMonthlyStatistics(),  // 刷新月度统计（热力图）
             loadMonthlySummary(),  // 刷新月度汇总（顶部统计）
+            loadBudgetOverview(),  // 刷新预算数据
         ])
         setIsRefreshing(false);
     };
@@ -1107,22 +1206,34 @@ export const TransactionListScreen: React.FC = () => {
                     // 全部：显示支出、收入和结余
                     <>
                         <View style={styles.statsRow}>
-                            <View style={styles.statItem}>
-                                <Text style={styles.statLabel}>总支出</Text>
+                            <TouchableOpacity 
+                                style={styles.statItem}
+                                onPress={() => handleOpenDetail('EXPENSE')}
+                                activeOpacity={0.7}
+                            >
+                                <Text style={styles.statLabel}>总支出 <Icon name="chevron-forward" size={12} color={Colors.textLight} /></Text>
                                 <Text style={[styles.statValue, styles.statValueExpense]}>
                                     ¥{statistics.totalExpense.toFixed(2)}
                                 </Text>
-                            </View>
+                            </TouchableOpacity>
                             <View style={styles.statDivider} />
-                            <View style={styles.statItem}>
-                                <Text style={styles.statLabel}>总收入</Text>
+                            <TouchableOpacity 
+                                style={styles.statItem}
+                                onPress={() => handleOpenDetail('INCOME')}
+                                activeOpacity={0.7}
+                            >
+                                <Text style={styles.statLabel}>总收入 <Icon name="chevron-forward" size={12} color={Colors.textLight} /></Text>
                                 <Text style={[styles.statValue, styles.statValueIncome]}>
                                     ¥{statistics.totalIncome.toFixed(2)}
                                 </Text>
-                            </View>
+                            </TouchableOpacity>
                         </View>
                         <View style={styles.balanceRow}>
-                            <Text style={styles.balanceLabel}>结余</Text>
+                            <View style={styles.balanceLabelContainer}>
+                                <Icon name="analytics-outline" size={14} color={Colors.textSecondary} />
+                                <Text style={styles.balanceLabel}>净结余</Text>
+                                <Text style={styles.balanceHint}>(收入-支出)</Text>
+                            </View>
                             <Text style={styles.balanceValue}>
                                 ¥{(statistics.totalIncome - statistics.totalExpense).toFixed(2)}
                             </Text>
@@ -1130,58 +1241,160 @@ export const TransactionListScreen: React.FC = () => {
                     </>
                 ) : filterType === 'EXPENSE' ? (
                     // 支出：只显示总支出（大号居中）
-                    <View style={styles.singleStatContainer}>
-                        <Text style={styles.singleStatLabel}>总支出</Text>
+                    <TouchableOpacity 
+                        style={styles.singleStatContainer}
+                        onPress={() => handleOpenDetail('EXPENSE')}
+                        activeOpacity={0.7}
+                    >
+                        <Text style={styles.singleStatLabel}>总支出 <Icon name="chevron-forward" size={12} color={Colors.textLight} /></Text>
                         <Text style={[styles.singleStatValue, styles.statValueExpense]}>
                             ¥{statistics.totalExpense.toFixed(2)}
                         </Text>
-                    </View>
+                    </TouchableOpacity>
                 ) : (
                     // 收入：只显示总收入（大号居中）
-                    <View style={styles.singleStatContainer}>
-                        <Text style={styles.singleStatLabel}>总收入</Text>
+                    <TouchableOpacity 
+                        style={styles.singleStatContainer}
+                        onPress={() => handleOpenDetail('INCOME')}
+                        activeOpacity={0.7}
+                    >
+                        <Text style={styles.singleStatLabel}>总收入 <Icon name="chevron-forward" size={12} color={Colors.textLight} /></Text>
                         <Text style={[styles.singleStatValue, styles.statValueIncome]}>
                             ¥{statistics.totalIncome.toFixed(2)}
                         </Text>
+                    </TouchableOpacity>
+                )}
+
+                {/* 预算区域 - 融入统计卡片 */}
+                {filterLedger && (
+                    <View style={styles.budgetSection}>
+                        <Text style={styles.budgetSectionLabel}>预算</Text>
+                        {/* 预算切换按钮 - 绝对定位在右上角 */}
+                        {budgetOverview && (
+                            <TouchableOpacity
+                                style={styles.budgetToggleButton}
+                                onPress={() => setBudgetVisible(!budgetVisible)}
+                                activeOpacity={0.6}
+                                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                            >
+                                <Icon
+                                    name={budgetVisible ? 'chevron-up-circle' : 'chevron-down-circle'}
+                                    size={18}
+                                    color={Colors.primary}
+                                />
+                            </TouchableOpacity>
+                        )}
+                        
+                        {/* 加载中占位 */}
+                        {budgetLoading && (
+                            <View style={styles.budgetLoadingPlaceholder}>
+                                <ActivityIndicator size="small" color={Colors.primary} />
+                            </View>
+                        )}
+                        
+                        {/* 预算卡片内容 */}
+                        {!budgetLoading && budgetVisible && budgetOverview && (
+                            <TouchableOpacity
+                                style={styles.budgetContent}
+                                onPress={() => {
+                                    if (filterLedger.id) {
+                                        (navigation as any).navigate('BudgetSetting', { ledgerId: filterLedger.id });
+                                    }
+                                }}
+                                activeOpacity={0.8}
+                            >
+                                <View style={styles.budgetHeader}>
+                                    <View style={styles.budgetTitleRow}>
+                                        <Icon name="pie-chart-outline" size={16} color={Colors.text} />
+                                        <Text style={styles.budgetTitle}>本月预算</Text>
+                                    </View>
+                                    <View style={[styles.budgetStatusBadge, { backgroundColor: getBudgetStatusColor(budgetOverview.status) + '15' }]}>
+                                        <Text style={[styles.budgetStatusText, { color: getBudgetStatusColor(budgetOverview.status) }]}>
+                                            {budgetOverview.status === 'EXCEEDED' ? '已超支' : budgetOverview.status === 'WARNING' ? '即将超支' : '正常'}
+                                        </Text>
+                                    </View>
+                                </View>
+
+                                <View style={styles.budgetAmountRow}>
+                                    <View>
+                                        <Text style={styles.budgetLabel}>剩余额度</Text>
+                                        <Text style={[styles.budgetAmount, { color: budgetOverview.remainingBudget < 0 ? Colors.error : Colors.text }]}>
+                                            ¥{budgetOverview.remainingBudget.toFixed(2)}
+                                        </Text>
+                                    </View>
+                                    <View style={styles.budgetRightAmount}>
+                                        <Text style={styles.budgetLabel}>总预算</Text>
+                                        <Text style={styles.budgetSubAmount}>¥{budgetOverview.totalBudget.toFixed(2)}</Text>
+                                    </View>
+                                </View>
+
+                                <View style={styles.budgetProgressContainer}>
+                                    <View style={[styles.budgetProgressBar, { width: `${Math.min(budgetOverview.progress, 100)}%`, backgroundColor: getBudgetStatusColor(budgetOverview.status) }]} />
+                                </View>
+                                
+                                <View style={styles.budgetProgressLabels}>
+                                    <Text style={styles.budgetProgressText}>已用 {budgetOverview.progress}%</Text>
+                                    <Text style={styles.budgetProgressText}>¥{budgetOverview.totalExpense.toFixed(2)}</Text>
+                                </View>
+                            </TouchableOpacity>
+                        )}
+                        
+                        {/* 预算未设置提示 */}
+                        {!budgetOverview && !budgetLoading && (
+                            <TouchableOpacity
+                                style={styles.budgetPlaceholderInline}
+                                onPress={() => {
+                                    if (filterLedger.id) {
+                                        (navigation as any).navigate('BudgetSetting', { ledgerId: filterLedger.id });
+                                    }
+                                }}
+                                activeOpacity={0.7}
+                            >
+                                <Icon name="pie-chart-outline" size={14} color={Colors.primary} />
+                                <Text style={styles.budgetPlaceholderInlineText}>设置本月预算</Text>
+                                <Icon name="chevron-forward" size={12} color={Colors.primary} />
+                            </TouchableOpacity>
+                        )}
                     </View>
                 )}
 
-                {/* 日历显示/隐藏切换按钮 */}
-                <TouchableOpacity
-                    style={styles.calendarToggle}
-                    onPress={handleToggleCalendar}
-                    activeOpacity={0.7}
-                >
-                    <Icon
-                        name={calendarVisible ? 'chevron-up' : 'chevron-down'}
-                        size={16}
-                        color={Colors.primary}
-                    />
-                    <Text style={styles.calendarToggleText}>
-                        {calendarVisible ? '收起热力图' : '展开热力图'}
-                    </Text>
-                </TouchableOpacity>
-
                 {/* ========== ✨ 新增：日历热力图 ========== */}
-                <DailyStatisticsCalendar
-                    selectedMonth={selectedMonth}
-                    statistics={dailyStatistics}
-                    visible={calendarVisible}
-                    selectedDay={selectedDay}
-                    showDetailModal={false} // Disable modal, use list filtering instead
-                    onDayPress={(date) => {
-                        // 点击某一天，切换到该天视图
-                        console.log('点击日期:', date);
-                        // 如果点击的是已选中的日期，则取消选中（回到月视图）
-                        if (selectedDay && date.toDateString() === selectedDay.toDateString()) {
-                            setSelectedDay(null);
-                        } else {
-                            setSelectedDay(date);
-                        }
-                        // 重置分页
-                        setCurrentPage(0);
-                    }}
-                />
+                <View style={styles.calendarSection}>
+                    <Text style={styles.calendarSectionLabel}>热力图</Text>
+                    {/* 热力图切换按钮 - 绝对定位在右上角 */}
+                    <TouchableOpacity
+                        style={styles.calendarToggleButton}
+                        onPress={handleToggleCalendar}
+                        activeOpacity={0.6}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    >
+                        <Icon
+                            name={calendarVisible ? 'chevron-up-circle' : 'chevron-down-circle'}
+                            size={18}
+                            color={Colors.primary}
+                        />
+                    </TouchableOpacity>
+                    
+                    <DailyStatisticsCalendar
+                        selectedMonth={selectedMonth}
+                        statistics={dailyStatistics}
+                        visible={calendarVisible}
+                        selectedDay={selectedDay}
+                        showDetailModal={false} // Disable modal, use list filtering instead
+                        onDayPress={(date) => {
+                            // 点击某一天，切换到该天视图
+                            console.log('点击日期:', date);
+                            // 如果点击的是已选中的日期，则取消选中（回到月视图）
+                            if (selectedDay && date.toDateString() === selectedDay.toDateString()) {
+                                setSelectedDay(null);
+                            } else {
+                                setSelectedDay(date);
+                            }
+                            // 重置分页
+                            setCurrentPage(0);
+                        }}
+                    />
+                </View>
             </Card>
 
             {/* ✨ 查看特定日期提示栏 */}
@@ -1726,6 +1939,109 @@ export const TransactionListScreen: React.FC = () => {
                         </View>
                 </Pressable>
             </Modal>
+
+            {/* 明细弹窗 */}
+            <Modal
+                visible={detailModalVisible}
+                transparent
+                animationType="slide"
+                onRequestClose={() => setDetailModalVisible(false)}
+            >
+                <Pressable
+                    style={styles.modalOverlay}
+                    onPress={() => setDetailModalVisible(false)}
+                >
+                    <Pressable
+                        onPress={(e) => e.stopPropagation()}
+                        style={styles.detailSheet}
+                    >
+                        {/* 拖拽指示器 */}
+                        <View style={styles.sheetHandle} />
+
+                        {/* 标题栏 */}
+                        <View style={styles.sheetHeader}>
+                            <Text style={styles.sheetTitle}>
+                                {detailModalType === 'EXPENSE' ? '支出明细' : '收入明细'}
+                            </Text>
+                            <TouchableOpacity
+                                style={styles.sheetCloseButton}
+                                onPress={() => setDetailModalVisible(false)}
+                            >
+                                <Text style={styles.sheetCloseButtonText}>✕</Text>
+                            </TouchableOpacity>
+                        </View>
+
+                        {/* 明细列表 */}
+                        <ScrollView style={styles.detailContent}>
+                            {detailModalLoading ? (
+                                <View style={styles.detailEmpty}>
+                                    <ActivityIndicator size="large" color={Colors.primary} />
+                                    <Text style={styles.detailEmptyText}>加载中...</Text>
+                                </View>
+                            ) : !detailModalData || detailModalData.categories.length === 0 ? (
+                                <View style={styles.detailEmpty}>
+                                    <Icon 
+                                        name="file-tray-outline" 
+                                        size={48} 
+                                        color={Colors.textLight} 
+                                    />
+                                    <Text style={styles.detailEmptyText}>暂无数据</Text>
+                                </View>
+                            ) : (
+                                <>
+                                    {/* 总计 */}
+                                    <View style={styles.detailTotalCard}>
+                                        <Text style={styles.detailTotalLabel}>总计</Text>
+                                        <Text style={[
+                                            styles.detailTotalAmount,
+                                            detailModalType === 'EXPENSE' 
+                                                ? styles.statValueExpense 
+                                                : styles.statValueIncome
+                                        ]}>
+                                            ¥{detailModalData.totalAmount.toFixed(2)}
+                                        </Text>
+                                    </View>
+
+                                    {/* 分类列表 */}
+                                    {detailModalData.categories.map((item) => (
+                                        <View key={item.categoryId} style={styles.detailItem}>
+                                            <View style={styles.detailItemLeft}>
+                                                <View style={[
+                                                    styles.detailItemIcon,
+                                                    { backgroundColor: item.color + '15' }
+                                                ]}>
+                                                    <CategoryIcon icon={item.icon} size={20} color={item.color} />
+                                                </View>
+                                                <View style={styles.detailItemInfo}>
+                                                    <Text style={styles.detailItemName}>
+                                                        {item.categoryName}
+                                                    </Text>
+                                                    <Text style={styles.detailItemCount}>
+                                                        {item.count} 笔交易
+                                                    </Text>
+                                                </View>
+                                            </View>
+                                            <View style={styles.detailItemRight}>
+                                                <Text style={[
+                                                    styles.detailItemAmount,
+                                                    detailModalType === 'EXPENSE' 
+                                                        ? styles.statValueExpense 
+                                                        : styles.statValueIncome
+                                                ]}>
+                                                    ¥{item.amount.toFixed(2)}
+                                                </Text>
+                                                <Text style={styles.detailItemPercentage}>
+                                                    {item.percentage.toFixed(1)}%
+                                                </Text>
+                                            </View>
+                                        </View>
+                                    ))}
+                                </>
+                            )}
+                        </ScrollView>
+                    </Pressable>
+                </Pressable>
+            </Modal>
         </>
     );
 };
@@ -1810,6 +2126,174 @@ const styles = StyleSheet.create({
         paddingBottom: 140, // 为悬浮按钮留出足够空间，确保最后的交易项不被遮挡
     },
 
+    // 预算区域（内联在统计卡片中）
+    budgetSection: {
+        position: 'relative',
+        marginTop: Spacing.md,
+        paddingTop: 0,
+        minHeight: 28,
+        backgroundColor: Colors.primary + '05',
+        borderRadius: BorderRadius.md,
+        overflow: 'hidden',
+    },
+    budgetToggleButton: {
+        position: 'absolute',
+        right: Spacing.sm,
+        top: 4,
+        zIndex: 10,
+        padding: 2,
+    },
+    budgetSectionLabel: {
+        fontSize: FontSizes.xs,
+        color: Colors.primary,
+        fontWeight: FontWeights.semibold,
+        paddingTop: 6,
+        paddingLeft: Spacing.sm,
+        letterSpacing: 0.5,
+    },
+    budgetLoadingPlaceholder: {
+        paddingVertical: Spacing.lg,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    budgetContent: {
+        paddingTop: Spacing.lg,
+        paddingBottom: Spacing.md,
+        paddingHorizontal: Spacing.xs,
+    },
+    budgetHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: Spacing.md,
+    },
+    budgetTitleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.xs,
+    },
+    budgetTitle: {
+        fontSize: FontSizes.md,
+        fontWeight: FontWeights.bold,
+        color: Colors.text,
+    },
+    budgetStatusBadge: {
+        paddingHorizontal: Spacing.sm,
+        paddingVertical: 2,
+        borderRadius: BorderRadius.sm,
+    },
+    budgetStatusText: {
+        fontSize: FontSizes.xs,
+        fontWeight: FontWeights.medium,
+    },
+    budgetAmountRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'flex-end',
+        marginBottom: Spacing.sm,
+    },
+    budgetLabel: {
+        fontSize: FontSizes.xs,
+        color: Colors.textSecondary,
+        marginBottom: 2,
+    },
+    budgetAmount: {
+        fontSize: FontSizes.xl,
+        fontWeight: FontWeights.bold,
+    },
+    budgetRightAmount: {
+        alignItems: 'flex-end',
+    },
+    budgetSubAmount: {
+        fontSize: FontSizes.md,
+        color: Colors.text,
+        fontWeight: FontWeights.medium,
+    },
+    budgetProgressContainer: {
+        height: 8,
+        backgroundColor: Colors.backgroundSecondary,
+        borderRadius: 4,
+        overflow: 'hidden',
+        marginBottom: Spacing.xs,
+    },
+    budgetProgressBar: {
+        height: '100%',
+        borderRadius: 4,
+    },
+    budgetProgressLabels: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+    },
+    budgetProgressText: {
+        fontSize: FontSizes.xs,
+        color: Colors.textSecondary,
+    },
+    
+    // 预算未设置提示（内联样式）
+    budgetPlaceholderInline: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: Spacing.md,
+        gap: 4,
+    },
+    budgetPlaceholderInlineText: {
+        fontSize: FontSizes.xs,
+        color: Colors.primary,
+        fontWeight: FontWeights.medium,
+    },
+
+    // 热力图区域
+    calendarSection: {
+        position: 'relative',
+        marginTop: Spacing.md,
+        paddingTop: 0,
+        minHeight: 28,
+        backgroundColor: Colors.income + '05',
+        borderRadius: BorderRadius.md,
+        overflow: 'hidden',
+    },
+    calendarToggleButton: {
+        position: 'absolute',
+        right: Spacing.sm,
+        top: 4,
+        zIndex: 10,
+        padding: 2,
+    },
+    calendarSectionLabel: {
+        fontSize: FontSizes.xs,
+        color: Colors.income,
+        fontWeight: FontWeights.semibold,
+        paddingTop: 6,
+        paddingLeft: Spacing.sm,
+        letterSpacing: 0.5,
+    },
+
+    // 预算占位符（原独立卡片样式，保留兼容）
+    budgetPlaceholder: {
+        backgroundColor: Colors.surface,
+        borderRadius: BorderRadius.lg,
+        padding: Spacing.lg,
+        marginBottom: Spacing.md,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 2,
+        borderColor: Colors.primary + '30',
+        borderStyle: 'dashed',
+        ...Shadows.sm,
+    },
+    budgetPlaceholderText: {
+        fontSize: FontSizes.md,
+        fontWeight: FontWeights.semibold,
+        color: Colors.primary,
+        marginTop: Spacing.sm,
+    },
+    budgetPlaceholderSubText: {
+        fontSize: FontSizes.sm,
+        color: Colors.textSecondary,
+        marginTop: Spacing.xs,
+    },
+
     // 统计卡片
     statsCard: {
         marginBottom: Spacing.md,
@@ -1820,7 +2304,7 @@ const styles = StyleSheet.create({
     // 导航箭头
     navArrowLeft: {
         position: 'absolute',
-        left: 4,
+        left: -4,
         top: '50%',
         marginTop: -20, // 居中微调
         zIndex: 10,
@@ -1828,7 +2312,7 @@ const styles = StyleSheet.create({
     },
     navArrowRight: {
         position: 'absolute',
-        right: 4,
+        right: -4,
         top: '50%',
         marginTop: -20,
         zIndex: 10,
@@ -1895,14 +2379,25 @@ const styles = StyleSheet.create({
     balanceRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
+        alignItems: 'center',
         paddingTop: Spacing.md,
         borderTopWidth: 1,
         borderTopColor: Colors.border,
+    },
+    balanceLabelContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
     },
     balanceLabel: {
         fontSize: FontSizes.md,
         color: Colors.text,
         fontWeight: FontWeights.semibold,
+    },
+    balanceHint: {
+        fontSize: FontSizes.xs,
+        color: Colors.textLight,
+        fontWeight: FontWeights.regular,
     },
     balanceValue: {
         fontSize: FontSizes.lg,
@@ -2408,22 +2903,8 @@ const styles = StyleSheet.create({
         color: Colors.textLight,
         marginTop: 2,
     },
-    // ========== ✨ 新增：日历热力图切换按钮样式 ==========
-    calendarToggle: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingVertical: Spacing.sm,
-        marginTop: Spacing.md,
-        gap: Spacing.xs,
-        borderTopWidth: 1,
-        borderTopColor: Colors.border + '30',
-    },
-    calendarToggleText: {
-        fontSize: FontSizes.sm,
-        color: Colors.primary,
-        fontWeight: FontWeights.medium,
-    },
+    // ========== ✨ 日历热力图相关样式（已合并到toggleButtonsRow） ==========
+    // calendarToggle 和 calendarToggleText 已废弃，统一使用 toggleButtonsRow
 
     // ✨ 选中日期提示栏
     selectedDayBanner: {
@@ -2574,5 +3055,102 @@ const styles = StyleSheet.create({
         fontSize: FontSizes.md,
         fontWeight: FontWeights.semibold,
         color: '#fff',
+    },
+    /* 明细弹窗样式 */
+    detailSheet: {
+        backgroundColor: Colors.surface,
+        borderTopLeftRadius: BorderRadius.xl,
+        borderTopRightRadius: BorderRadius.xl,
+        maxHeight: '80%',
+        paddingBottom: Spacing.xl,
+    },
+    detailContent: {
+        paddingHorizontal: Spacing.lg,
+        maxHeight: 500,
+    },
+    detailTotalCard: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        backgroundColor: Colors.background,
+        padding: Spacing.lg,
+        borderRadius: BorderRadius.lg,
+        marginBottom: Spacing.lg,
+        borderWidth: 1,
+        borderColor: Colors.primary + '20',
+    },
+    detailTotalLabel: {
+        fontSize: FontSizes.lg,
+        fontWeight: FontWeights.semibold,
+        color: Colors.text,
+    },
+    detailTotalAmount: {
+        fontSize: FontSizes.xxl,
+        fontWeight: FontWeights.bold,
+    },
+    detailItem: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: Spacing.md,
+        paddingHorizontal: Spacing.md,
+        backgroundColor: Colors.background,
+        borderRadius: BorderRadius.lg,
+        marginBottom: Spacing.sm,
+    },
+    detailItemLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flex: 1,
+    },
+    detailItemIcon: {
+        width: 44,
+        height: 44,
+        borderRadius: BorderRadius.md,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: Spacing.md,
+    },
+    detailItemEmoji: {
+        fontSize: 24,
+    },
+    detailItemInfo: {
+        flex: 1,
+    },
+    detailItemName: {
+        fontSize: FontSizes.md,
+        fontWeight: FontWeights.semibold,
+        color: Colors.text,
+        marginBottom: 2,
+    },
+    detailItemCount: {
+        fontSize: FontSizes.xs,
+        color: Colors.textLight,
+    },
+    detailItemRight: {
+        alignItems: 'flex-end',
+    },
+    detailItemAmount: {
+        fontSize: FontSizes.lg,
+        fontWeight: FontWeights.bold,
+        marginBottom: 2,
+    },
+    detailItemPercentage: {
+        fontSize: FontSizes.xs,
+        color: Colors.textSecondary,
+        backgroundColor: Colors.backgroundSecondary,
+        paddingHorizontal: Spacing.xs,
+        paddingVertical: 2,
+        borderRadius: BorderRadius.sm,
+    },
+    detailEmpty: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: Spacing.xxl * 2,
+    },
+    detailEmptyText: {
+        fontSize: FontSizes.md,
+        color: Colors.textLight,
+        marginTop: Spacing.sm,
     },
 });

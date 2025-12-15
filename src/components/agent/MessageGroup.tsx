@@ -7,6 +7,7 @@
 
 import React, { useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, Pressable, Image } from 'react-native';
+import Icon from 'react-native-vector-icons/Ionicons';
 import Markdown from 'react-native-markdown-display';
 import { AgentMessage, EmbeddedContentType, Attachment } from '../../types/agent';
 import { Colors, Spacing, FontSizes, BorderRadius, FontWeights, Shadows } from '../../constants/theme';
@@ -290,6 +291,7 @@ export const MessageGroup: React.FC<MessageGroupProps> = ({
     const isToolCall = message.type === 'tool_call';
     const isToolResult = message.type === 'tool_result';
     const isThinking = message.type === 'thinking';
+    const isReflection = message.type === 'reflection';
     const isEmbedded = message.type === 'embedded';
     const isPlan = message.type === 'plan';
     const hasAttachments = message.metadata?.attachments && message.metadata.attachments.length > 0;
@@ -300,6 +302,16 @@ export const MessageGroup: React.FC<MessageGroupProps> = ({
         <View key={message.id} style={styles.thinkingRow}>
           <View style={styles.thinkingDot} />
           <Text style={styles.thinkingText}>{message.content}</Text>
+        </View>
+      );
+    }
+
+    // 反思消息 - 以低调方式显示，类似思考过程
+    if (isReflection) {
+      return (
+        <View key={message.id} style={styles.reflectionRow}>
+          <Icon name="bulb-outline" size={12} color={Colors.textSecondary} style={styles.reflectionIcon} />
+          <Text style={styles.reflectionText}>{message.content}</Text>
         </View>
       );
     }
@@ -513,6 +525,24 @@ const styles = StyleSheet.create({
     color: Colors.textLight,
     fontStyle: 'italic',
     opacity: 0.8,
+  },
+  reflectionRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginVertical: 1,
+    paddingVertical: 1,
+    opacity: 0.6,
+  },
+  reflectionIcon: {
+    marginRight: Spacing.xs,
+    marginTop: 2,
+  },
+  reflectionText: {
+    flex: 1,
+    fontSize: FontSizes.xs,
+    color: Colors.textLight,
+    fontStyle: 'italic',
+    lineHeight: 16,
   },
 
   // 文本样式

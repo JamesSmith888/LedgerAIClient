@@ -82,6 +82,9 @@ export interface AgentMessage {
   timestamp: Date;
   status?: MessageStatus;
   
+  /** 消息序号，用于确保显示顺序（越小越早显示） */
+  sequence?: number;
+  
   // 扩展字段 - 用于未来的高级功能
   metadata?: {
     // 工具调用信息（LangChain Agent）
@@ -179,6 +182,14 @@ export interface WSAgentMessage {
   messageId?: string;
   timestamp?: number;
   metadata?: any;
+}
+
+export interface ToolCallData {
+  toolName: string;
+  status: 'running' | 'completed' | 'failed';
+  args: any;
+  result?: any;
+  timestamp: Date;
 }
 
 /**

@@ -48,6 +48,7 @@ import { PaymentMethod } from '../types/paymentMethod';
 import { AI_PROVIDERS, apiKeyStorage } from '../services/apiKeyStorage';
 import { userPreferenceMemory } from '../services/userPreferenceMemory';
 import { completionService } from '../services/completionService';
+import { agentConfigStorage, AgentConfig } from '../services/agentConfigStorage';
 
 // WebSocket 配置
 const DEV_WS_URL = 'ws://localhost:8080/ws';
@@ -87,7 +88,7 @@ export const AgentScreen: React.FC = () => {
   // 智能建议设置
   const [showSuggestionSettings, setShowSuggestionSettings] = useState(false);
   const [suggestionSettings, setSuggestionSettings] = useState({
-    enabled: false, // 默认关闭
+    enabled: true, // 默认开启（修复建议不显示问题）
     maxCount: 3,
   });
 
@@ -96,6 +97,9 @@ export const AgentScreen: React.FC = () => {
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [isLoadingContext, setIsLoadingContext] = useState(true);
   const [userPreferenceContext, setUserPreferenceContext] = useState<string>('');
+  
+  // Agent 配置状态
+  const [agentConfig, setAgentConfig] = useState<AgentConfig>({});
 
   // 获取分类、支付方式和用户偏好记忆数据
   useEffect(() => {
@@ -109,8 +113,8 @@ export const AgentScreen: React.FC = () => {
       setIsLoadingContext(true);
       
       try {
-        // 并行获取分类、支付方式和用户偏好
-        const [categoriesData, paymentMethodsData, prefContext] = await Promise.all([
+        // 并行获取分类、支付方式、用户偏好和 Agent 配置
+        const [categoriesData, paymentMethodsData, prefContext, savedAgentConfig] = await Promise.all([
           categoryAPI.getAll().catch(err => {
             console.warn('⚠️ [AgentScreen] Failed to fetch categories:', err);
             return [];
@@ -123,15 +127,21 @@ export const AgentScreen: React.FC = () => {
             console.warn('⚠️ [AgentScreen] Failed to generate preference context:', err);
             return '';
           }),
+          agentConfigStorage.getConfig().catch(err => {
+            console.warn('⚠️ [AgentScreen] Failed to load agent config:', err);
+            return {};
+          }),
         ]);
         
         setCategories(categoriesData);
         setPaymentMethods(paymentMethodsData);
         setUserPreferenceContext(prefContext);
+        setAgentConfig(savedAgentConfig);
         console.log('✅ [AgentScreen] Context data loaded:', {
           categories: categoriesData.length,
           paymentMethods: paymentMethodsData.length,
           hasPreferenceContext: prefContext.length > 0,
+          agentConfig: savedAgentConfig,
         });
       } catch (error) {
         console.error('❌ [AgentScreen] Failed to fetch context data:', error);
@@ -210,7 +220,6 @@ export const AgentScreen: React.FC = () => {
     messages,
     sendMessage,
     clearMessages,
-    reconnect,
     cancelChat,
     isConnected,
     isTyping,
@@ -226,6 +235,9 @@ export const AgentScreen: React.FC = () => {
     // 反思模式扩展
     lastReflection,
     isReflecting,
+    // 智能建议
+    suggestions,
+    clearSuggestions,
     // 模型信息
     currentProvider,
     currentModelName,
@@ -242,15 +254,18 @@ export const AgentScreen: React.FC = () => {
     // 状态机配置
     enableIntentRewriting: true, // 启用意图改写（用户输入优化）
     enableConfirmation: true, // 启用危险操作确认
-    enableReflection: true, // 始终启用 ReAct 反思模式（深思模式）
+    enableReflection: agentConfig.enableReflection ?? true, // 从配置读取，默认开启（ReAct 核心特性）
     reflectorConfig: {
-      frequency: 'every_step', // 每步反思
+      frequency: agentConfig.reflectionFrequency ?? 'on_error', // 从配置读取，默认出错时反思
       showThoughts: true, // 展示反思过程
+      confidenceThresholds: agentConfig.reflectorConfidenceThresholds, // 从配置读取
     },
     userPreferences: {
-      confirmHighRisk: true, // 高风险操作需确认
-      confirmMediumRisk: false, // 中等风险操作不需确认
-      batchThreshold: 5, // 批量操作超过5条需确认
+      confirmHighRisk: agentConfig.confirmationPolicy?.confirmHighRisk ?? true,
+      confirmMediumRisk: agentConfig.confirmationPolicy?.confirmMediumRisk ?? false,
+      batchThreshold: agentConfig.confirmationPolicy?.batchThreshold ?? 5,
+      intentRewriterConfidenceThresholds: agentConfig.intentRewriterConfidenceThresholds, // 从配置读取
+      reflectorConfidenceThresholds: agentConfig.reflectorConfidenceThresholds, // 从配置读取
     },
   });
 
@@ -417,10 +432,10 @@ export const AgentScreen: React.FC = () => {
   const [previewImages, setPreviewImages] = useState<Attachment[]>([]);
   const [previewImageIndex, setPreviewImageIndex] = useState(0);
 
-  // 从最后一条 AI 消息中提取建议操作
+  // 从 AgentContext 获取建议（由 render_action_buttons 工具设置）
   // 支持两种来源：
-  // 1. 消息 metadata 中的 suggestedActions（AI 直接生成）
-  // 2. 嵌入内容 data 中的 suggestedActions（渲染工具返回）
+  // 1. AgentContext.suggestions（render_action_buttons 工具专用，优先级最高）
+  // 2. 消息 metadata 中的 suggestedActions（AI 直接生成，备用）
   const currentSuggestedActions = useMemo(() => {
     // 如果功能未启用，直接返回空
     if (!suggestionSettings.enabled) return [];
@@ -428,22 +443,28 @@ export const AgentScreen: React.FC = () => {
     if (suggestionsDismissed || isTyping || agentState !== AgentState.IDLE) {
       return [];
     }
-    // 从后往前查找最后一条有建议的 AI 消息
+    
+    // 优先使用 AgentContext 的 suggestions（由 render_action_buttons 设置）
+    if (suggestions && suggestions.length > 0) {
+      return suggestions.slice(0, suggestionSettings.maxCount);
+    }
+    
+    // 备用：从后往前查找最后一条有建议的 AI 消息
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
       if (msg.sender === 'assistant') {
-        // 优先检查消息级别的 suggestedActions
+        // 检查消息级别的 suggestedActions
         if (msg.metadata?.suggestedActions?.length) {
           return msg.metadata.suggestedActions.slice(0, suggestionSettings.maxCount);
         }
-        // 其次检查嵌入内容中的 suggestedActions
+        // 检查嵌入内容中的 suggestedActions
         if (msg.metadata?.embeddedContent?.data?.suggestedActions?.length) {
           return msg.metadata.embeddedContent.data.suggestedActions.slice(0, suggestionSettings.maxCount);
         }
       }
     }
     return [];
-  }, [messages, suggestionsDismissed, isTyping, agentState, suggestionSettings]);
+  }, [suggestions, messages, suggestionsDismissed, isTyping, agentState, suggestionSettings]);
 
   // 获取第一条建议作为自动填充内容
   const topSuggestion = useMemo(() => {
@@ -496,7 +517,9 @@ export const AgentScreen: React.FC = () => {
    */
   const handleDismissSuggestions = useCallback(() => {
     setSuggestionsDismissed(true);
-  }, []);
+    // 同时清除 AgentContext 的 suggestions
+    clearSuggestions();
+  }, [clearSuggestions]);
 
   /**
    * 处理附件点击（全屏预览）
@@ -538,13 +561,6 @@ export const AgentScreen: React.FC = () => {
       ]
     );
   }, [clearMessages]);
-
-  /**
-   * 处理重新连接
-   */
-  const handleReconnect = useCallback(() => {
-    reconnect();
-  }, [reconnect]);
 
   /**
    * 新建对话
@@ -685,6 +701,9 @@ export const AgentScreen: React.FC = () => {
       case 'suggestion_settings':
         setShowSuggestionSettings(true);
         break;
+      case 'agent_config':
+        navigation.navigate('AgentConfig');
+        break;
       case 'settings':
         navigation.navigate('APIKeySettings');
         break;
@@ -692,10 +711,10 @@ export const AgentScreen: React.FC = () => {
         handleClearChat();
         break;
       case 'reconnect':
-        handleReconnect();
+        // 重连功能已移除，无操作
         break;
     }
-  }, [handleNewConversation, handleClearChat, handleReconnect, navigation, handleBackgroundSetting]);
+  }, [handleNewConversation, handleClearChat, navigation, handleBackgroundSetting]);
 
   /**
    * 消息操作回调 - 使用内置处理器
@@ -856,14 +875,13 @@ export const AgentScreen: React.FC = () => {
 
         {/* 右侧：操作按钮 */}
         <View style={styles.headerRight}>
-          {/* 新建对话按钮 - 放到显眼位置 */}
+          {/* 新建对话按钮 - 简化为图标 */}
           <TouchableOpacity
-            style={styles.newChatButton}
+            style={[styles.headerIconButton, styles.primaryIconButton]}
             onPress={handleNewConversation}
             activeOpacity={0.7}
           >
-            <Icon name="add" size={18} color={Colors.primary} />
-            <Text style={styles.newChatButtonText}>新对话</Text>
+            <Icon name="add" size={22} color={Colors.primary} />
           </TouchableOpacity>
 
           {/* 更多操作菜单 */}
@@ -872,7 +890,7 @@ export const AgentScreen: React.FC = () => {
             onPress={() => setShowMenu(true)}
             activeOpacity={0.7}
           >
-            <Icon name="ellipsis-vertical" size={18} color={Colors.text} />
+            <Icon name="ellipsis-vertical" size={20} color={Colors.text} />
           </TouchableOpacity>
         </View>
       </View>
@@ -922,6 +940,11 @@ export const AgentScreen: React.FC = () => {
                     ]}
                     onPress={() => handleSwitchConversation(conv.id)}
                   >
+                    {/* 选中指示器 - 左侧蓝色边框 */}
+                    {conv.id === currentConversationId && (
+                      <View style={styles.conversationActiveIndicator} />
+                    )}
+                    
                     <View style={styles.conversationContent}>
                       {editingConversationId === conv.id ? (
                         <TextInput
@@ -935,9 +958,17 @@ export const AgentScreen: React.FC = () => {
                         />
                       ) : (
                         <>
-                          <Text style={styles.conversationTitle} numberOfLines={1}>
-                            {conv.title}
-                          </Text>
+                          <View style={styles.conversationTitleRow}>
+                            <Text style={[
+                              styles.conversationTitle,
+                              conv.id === currentConversationId && styles.conversationTitleActive
+                            ]} numberOfLines={1}>
+                              {conv.title}
+                            </Text>
+                            {conv.id === currentConversationId && (
+                              <Icon name="checkmark-circle" size={16} color={Colors.primary} />
+                            )}
+                          </View>
                           <Text style={styles.conversationMeta}>
                             {conv.messageCount} 条消息 •{' '}
                             {conv.updatedAt.toLocaleDateString()}
@@ -1325,30 +1356,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     flexShrink: 0,
-    gap: 6,
+    gap: 8,
   },
-  // 新建对话按钮 - 显眼的主操作
-  newChatButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 16,
+  // 主操作图标按钮（如新建对话）
+  primaryIconButton: {
     backgroundColor: 'rgba(59, 130, 246, 0.1)',
-    borderWidth: 1,
-    borderColor: Colors.primary,
-    gap: 4,
-  },
-  newChatButtonText: {
-    fontSize: 12,
-    fontWeight: FontWeights.semibold,
-    color: Colors.primary,
   },
   // 统一的头部图标按钮样式
   headerIconButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: Colors.backgroundSecondary,
     justifyContent: 'center',
     alignItems: 'center',
@@ -1465,19 +1483,41 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.md,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
+    position: 'relative',
   },
   conversationItemActive: {
-    backgroundColor: Colors.backgroundSecondary,
+    backgroundColor: 'rgba(59, 130, 246, 0.08)', // 更明显的蓝色背景
+  },
+  // 选中指示器 - 左侧竖条
+  conversationActiveIndicator: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 4,
+    backgroundColor: Colors.primary,
+    borderTopRightRadius: 2,
+    borderBottomRightRadius: 2,
   },
   conversationContent: {
     flex: 1,
     marginRight: Spacing.md,
   },
+  conversationTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    marginBottom: 4,
+  },
   conversationTitle: {
     fontSize: FontSizes.md,
     fontWeight: FontWeights.semibold,
     color: Colors.text,
-    marginBottom: 4,
+    flex: 1,
+  },
+  conversationTitleActive: {
+    color: Colors.primary,
+    fontWeight: FontWeights.bold,
   },
   conversationMeta: {
     fontSize: FontSizes.xs,

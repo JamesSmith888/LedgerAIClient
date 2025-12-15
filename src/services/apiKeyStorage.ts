@@ -15,10 +15,10 @@ const STORAGE_KEYS = {
 } as const;
 
 // 支持的 AI 提供商
-export type AIProvider = 'gemini' | 'deepseek';
+export type AIProvider = 'gemini' | 'deepseek' | 'alibaba';
 
 // 模型角色/用途
-export type ModelRole = 'executor' | 'intentRewriter' | 'reflector';
+export type ModelRole = 'executor' | 'intentRewriter' | 'reflector' | 'completion';
 
 // 模型角色配置
 export interface ModelRoleConfig {
@@ -61,6 +61,7 @@ export interface AIProviderConfig {
 export interface APIKeyStore {
   gemini?: string;
   deepseek?: string;
+  alibaba?: string;
 }
 
 // 模型角色定义
@@ -83,15 +84,21 @@ export const MODEL_ROLES: Record<ModelRole, ModelRoleConfig> = {
     description: '评估执行结果，发现问题并提供改进建议',
     icon: '🔍',
   },
+  completion: {
+    id: 'completion',
+    name: '智能补全模型',
+    description: '在输入框中提供实时智能补全建议',
+    icon: '✨',
+  },
 };
 
 // ============ 默认配置常量 ============
 
 /** 默认提供商 */
-export const DEFAULT_PROVIDER: AIProvider = 'gemini';
+export const DEFAULT_PROVIDER: AIProvider = 'alibaba';
 
 /** 默认模型名称 */
-export const DEFAULT_MODEL = 'gemini-2.5-flash-lite';
+export const DEFAULT_MODEL = 'qwen3-omni-flash';
 
 // 提供商配置
 export const AI_PROVIDERS: Record<AIProvider, AIProviderConfig> = {
@@ -123,6 +130,19 @@ export const AI_PROVIDERS: Record<AIProvider, AIProviderConfig> = {
     supportsTools: true,
     supportsAudio: false,
   },
+  alibaba: {
+    id: 'alibaba',
+    name: '阿里云百炼',
+    description: '阿里云通义千问大模型服务，兼容 OpenAI API',
+    icon: '☁️',
+    placeholder: 'sk-...',
+    helpUrl: 'https://bailian.console.aliyun.com/',
+    models: ['qwen3-omni-flash', 'qwen-max', 'qwen-plus', 'qwen-turbo', 'qwen-vl-max', 'qwen-vl-plus'],
+    defaultModel: 'qwen3-omni-flash',
+    supportsVision: true,
+    supportsTools: true,
+    supportsAudio: false,
+  },
 };
 
 // 默认模型配置（所有角色使用同一个模型）
@@ -130,6 +150,7 @@ export const DEFAULT_MODEL_CONFIGS: ModelConfigs = {
   executor: { provider: DEFAULT_PROVIDER, model: DEFAULT_MODEL },
   intentRewriter: { provider: DEFAULT_PROVIDER, model: DEFAULT_MODEL },
   reflector: { provider: DEFAULT_PROVIDER, model: DEFAULT_MODEL },
+  completion: { provider: DEFAULT_PROVIDER, model: DEFAULT_MODEL },
 };
 
 /**
@@ -156,8 +177,8 @@ class APIKeyStorageService {
 
       // 加载选中的提供商
       const provider = await AsyncStorage.getItem(STORAGE_KEYS.SELECTED_PROVIDER);
-      if (provider && (provider === 'gemini' || provider === 'deepseek')) {
-        this.selectedProvider = provider;
+      if (provider && (provider === 'gemini' || provider === 'deepseek' || provider === 'alibaba')) {
+        this.selectedProvider = provider as AIProvider;
       }
 
       // 加载模型配置
@@ -271,6 +292,7 @@ class APIKeyStorageService {
     return {
       gemini: !!this.apiKeys.gemini,
       deepseek: !!this.apiKeys.deepseek,
+      alibaba: !!this.apiKeys.alibaba,
     };
   }
 
@@ -314,6 +336,12 @@ class APIKeyStorageService {
         // DeepSeek API Key 通常以 sk- 开头
         if (!trimmed.startsWith('sk-') || trimmed.length < 20) {
           return { valid: false, message: 'DeepSeek API Key 格式不正确，应以 sk- 开头' };
+        }
+        break;
+      case 'alibaba':
+        // 阿里云百炼 API Key 也是以 sk- 开头（OpenAI 兼容格式）
+        if (!trimmed.startsWith('sk-') || trimmed.length < 20) {
+          return { valid: false, message: '阿里云百炼 API Key 格式不正确，应以 sk- 开头' };
         }
         break;
     }

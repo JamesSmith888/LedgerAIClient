@@ -153,6 +153,17 @@ export interface ReflectorConfig {
   
   /** 可用的工具列表（动态注入，用于生成工具说明） */
   availableTools?: StructuredToolInterface[];
+  
+  /**
+   * 置信度阈值配置（置信度驱动决策）
+   * 控制在不同置信度下的反思行为：
+   * - lowConfidenceThreshold: 低于此值建议 ask_user（默认 0.3）
+   * - 高于此值：可以继续执行或调整策略
+   */
+  confidenceThresholds?: {
+    /** 低置信度阈值（< 此值建议询问用户），范围 0.0-0.5，默认 0.3 */
+    low?: number;
+  };
 }
 
 // ============ 反思器 System Prompt ============
@@ -165,7 +176,7 @@ export interface ReflectorConfig {
  * 2. 专注于评估执行结果和提供纠正建议
  * 3. 不硬编码具体的工具参数格式
  */
-function buildReflectorSystemPrompt(tools?: StructuredToolInterface[]): string {
+function buildReflectorSystemPrompt(tools?: StructuredToolInterface[], lowConfidenceThreshold: number = 0.3): string {
   // 只提取工具名称列表
   const toolNames = tools?.map(tool => tool.name).join(', ') || '（无可用工具）';
   
@@ -211,7 +222,13 @@ ${renderToolNames || '（无渲染工具）'}
 - **数据传递**: 调用渲染工具时，必须从上一步的工具结果中提取完整数据传入（不要传空数组或空对象）
 - nextAction=complete: 仅当业务操作成功 **且** 已调用渲染工具
 - 如果业务成功但未渲染: nextAction=continue, progressPercent=80
-- correctionHint: adjust_strategy 时必须具体可执行，包含数据提取说明`;
+- correctionHint: adjust_strategy 时必须具体可执行，包含数据提取说明
+
+## 置信度驱动决策
+
+当你对下一步如何处理不确定时，根据置信度决定：
+- **高置信度（confidence >= ${lowConfidenceThreshold}）**: 可以选择 continue/adjust_strategy/retry
+- **低置信度（confidence < ${lowConfidenceThreshold}）**: 应选择 nextAction=ask_user，并在 thought 中说明需要用户澄清什么信息`;
 }
 
 // ============ 反思器实现 ============
@@ -227,10 +244,12 @@ export class Reflector {
   private reflectionCount: number = 0;
   private maxReflections: number;
   private availableTools: StructuredToolInterface[] = [];
+  private lowConfidenceThreshold: number;
 
   constructor(config: ReflectorConfig) {
     this.config = config;
     this.maxReflections = config.maxReflections ?? 20;
+    this.lowConfidenceThreshold = config.confidenceThresholds?.low ?? 0.3;
     // 从配置中获取工具列表（如果有的话）
     if (config.availableTools) {
       this.availableTools = config.availableTools;
@@ -326,8 +345,8 @@ export class Reflector {
     try {
       const prompt = this.buildReflectionPrompt(context);
       
-      // 动态生成系统提示词，包含当前可用的工具列表
-      const systemPrompt = buildReflectorSystemPrompt(this.availableTools);
+      // 动态生成系统提示词，包含当前可用的工具列表和置信度阈值
+      const systemPrompt = buildReflectorSystemPrompt(this.availableTools, this.lowConfidenceThreshold);
       
       const response = await this.model.invoke([
         new SystemMessage(systemPrompt),
@@ -582,9 +601,12 @@ export function createReflector(config: ReflectorConfig): Reflector {
  * 默认配置
  */
 export const DEFAULT_REFLECTOR_CONFIG: ReflectorConfig = {
-  enabled: false,
-  frequency: 'every_step',
+  enabled: true,  // 默认启用反思模式
+  frequency: 'on_error',  // 默认只在出错时反思，平衡性能和准确性
   model: DEFAULT_MODEL,
   maxReflections: 20,
   showThoughts: true,
+  confidenceThresholds: {
+    low: 0.3,  // 低置信度阈值：< 0.3 建议询问用户
+  },
 };

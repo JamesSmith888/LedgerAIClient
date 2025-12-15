@@ -17,7 +17,7 @@ import {
 import { Icon } from '../common';
 import { Colors, Spacing, FontSizes, BorderRadius, Shadows, FontWeights } from '../../constants/theme';
 
-export type AgentMenuAction = 'new_chat' | 'tools' | 'memory' | 'settings' | 'suggestion_settings' | 'clear_chat' | 'reconnect' | 'background';
+export type AgentMenuAction = 'new_chat' | 'tools' | 'memory' | 'settings' | 'suggestion_settings' | 'clear_chat' | 'reconnect' | 'background' | 'agent_config';
 
 interface AgentHeaderMenuProps {
   visible: boolean;
@@ -104,6 +104,20 @@ export const AgentHeaderMenu: React.FC<AgentHeaderMenuProps> = ({
                     <Icon name="bulb-outline" size={20} color={Colors.primary} />
                   </View>
                   <Text style={styles.menuLabel}>智能建议</Text>
+                  <Icon name="chevron-forward" size={16} color={Colors.textSecondary} />
+                </TouchableOpacity>
+
+                <View style={styles.divider} />
+
+                {/* AI 行为配置 */}
+                <TouchableOpacity
+                  style={styles.menuItem}
+                  onPress={() => handleAction('agent_config')}
+                >
+                  <View style={[styles.iconContainer, { backgroundColor: 'rgba(139, 92, 246, 0.15)' }]}>
+                    <Icon name="options-outline" size={20} color="#8B5CF6" />
+                  </View>
+                  <Text style={styles.menuLabel}>AI 行为配置</Text>
                   <Icon name="chevron-forward" size={16} color={Colors.textSecondary} />
                 </TouchableOpacity>
 

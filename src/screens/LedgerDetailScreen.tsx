@@ -30,6 +30,9 @@ import type { Ledger, LedgerMember } from '../types/ledger';
 import { LedgerType, getRoleName, getRoleColor } from '../types/ledger';
 import { ledgerAPI } from '../api/services/ledgerAPI';
 import { ledgerMemberAPI } from '../api/services/ledgerMemberAPI';
+import { budgetAPI } from '../api/services/budgetAPI';
+import { BudgetOverview } from '../types/budget';
+import { BudgetProgressCard } from '../components/budget/BudgetProgressCard';
 
 export const LedgerDetailScreen: React.FC = () => {
   const navigation = useNavigation();
@@ -40,6 +43,7 @@ export const LedgerDetailScreen: React.FC = () => {
 
   const [ledger, setLedger] = useState<Ledger | null>(null);
   const [members, setMembers] = useState<LedgerMember[]>([]);
+  const [budgetOverview, setBudgetOverview] = useState<BudgetOverview | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -53,8 +57,13 @@ export const LedgerDetailScreen: React.FC = () => {
 
     try {
       setIsLoading(true);
-      const data = await ledgerAPI.getById(ledgerId);
+      const [data, budgetData] = await Promise.all([
+        ledgerAPI.getById(ledgerId),
+        budgetAPI.getBudgetOverview(ledgerId).catch(() => null) // 允许失败，可能是没有设置预算
+      ]);
+      
       setLedger(data);
+      setBudgetOverview(budgetData);
 
       // 如果是共享账本，加载成员列表
       if (data.type === LedgerType.SHARED) {
@@ -212,6 +221,31 @@ export const LedgerDetailScreen: React.FC = () => {
             />
           }
         >
+          {/* 预算卡片或设置按钮 */}
+          {budgetOverview ? (
+            <BudgetProgressCard 
+              budget={budgetOverview} 
+              onPress={() => {
+                if (ledgerId) {
+                  navigation.navigate('BudgetSetting', { ledgerId } as any);
+                }
+              }} 
+            />
+          ) : (
+            <TouchableOpacity
+              style={styles.budgetPlaceholder}
+              onPress={() => {
+                if (ledgerId) {
+                  navigation.navigate('BudgetSetting', { ledgerId } as any);
+                }
+              }}
+            >
+              <Icon name="pie-chart-outline" size={24} color={Colors.primary} />
+              <Text style={styles.budgetPlaceholderText}>还未设置预算</Text>
+              <Text style={styles.budgetPlaceholderSubText}>点击设置月度预算</Text>
+            </TouchableOpacity>
+          )}
+
           {/* 基本信息卡片 */}
           <Card style={styles.infoCard}>
             <View style={styles.ledgerHeader}>
@@ -567,5 +601,29 @@ const styles = StyleSheet.create({
     fontSize: FontSizes.md,
     color: Colors.expense,
     fontWeight: FontWeights.semibold,
+  },
+
+  // 预算占位符
+  budgetPlaceholder: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.lg,
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.md,
+    marginBottom: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderStyle: 'dashed',
+  },
+  budgetPlaceholderText: {
+    fontSize: FontSizes.md,
+    fontWeight: FontWeights.medium,
+    color: Colors.text,
+    marginTop: Spacing.sm,
+  },
+  budgetPlaceholderSubText: {
+    fontSize: FontSizes.xs,
+    color: Colors.textSecondary,
+    marginTop: Spacing.xs,
   },
 });

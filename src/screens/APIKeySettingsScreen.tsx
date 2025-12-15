@@ -4,7 +4,7 @@
  * 允许用户配置自己的 AI 模型 API Key
  * 支持 Google Gemini 和 DeepSeek
  */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -15,6 +15,9 @@ import {
   Alert,
   Linking,
   ActivityIndicator,
+  Modal,
+  Pressable,
+  FlatList,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -202,6 +205,295 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
 };
 
 /**
+ * 智能模型选择器组件
+ * 
+ * 特性：
+ * 1. 模型少时（≤5）：显示为水平滚动的按钮组
+ * 2. 模型多时（>5）：显示为可搜索的下拉列表
+ * 3. 始终支持手动输入自定义模型名称
+ */
+interface ModelSelectorProps {
+  models: ModelInfo[];
+  selectedModel: string;
+  onModelChange: (model: string) => void;
+  providerName: string;
+}
+
+const ModelSelector: React.FC<ModelSelectorProps> = ({
+  models,
+  selectedModel,
+  onModelChange,
+  providerName,
+}) => {
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [customModel, setCustomModel] = useState('');
+  const [showCustomInput, setShowCustomInput] = useState(false);
+
+  // 检查当前选中的模型是否是自定义的（不在列表中）
+  const isCustomModel = !models.some(m => m.id === selectedModel);
+  
+  // 过滤模型列表
+  const filteredModels = useMemo(() => models.filter(m => 
+    m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    m.id.toLowerCase().includes(searchQuery.toLowerCase())
+  ), [models, searchQuery]);
+
+  const MODEL_THRESHOLD = 5; // 超过这个数量就切换到下拉模式
+  const useDropdownMode = models.length > MODEL_THRESHOLD;
+
+  const handleSelectModel = (modelId: string) => {
+    onModelChange(modelId);
+    setShowDropdown(false);
+    setSearchQuery('');
+  };
+
+  const handleCustomModelSubmit = () => {
+    if (customModel.trim()) {
+      onModelChange(customModel.trim());
+      setShowCustomInput(false);
+      setCustomModel('');
+    }
+  };
+
+  // 模式1: 按钮组模式（模型较少）
+  if (!useDropdownMode) {
+    return (
+      <View style={styles.modelSelectorContainer}>
+        <ScrollView 
+          horizontal 
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.modelButtonGroup}
+        >
+          {models.map((model) => (
+            <TouchableOpacity
+              key={model.id}
+              style={[
+                styles.modelButton,
+                selectedModel === model.id && styles.modelButtonSelected,
+              ]}
+              onPress={() => handleSelectModel(model.id)}
+              activeOpacity={0.7}
+            >
+              <Text 
+                style={[
+                  styles.modelButtonText,
+                  selectedModel === model.id && styles.modelButtonTextSelected,
+                ]}
+                numberOfLines={1}
+              >
+                {model.name}
+              </Text>
+            </TouchableOpacity>
+          ))}
+          
+          {/* 自定义模型按钮 */}
+          <TouchableOpacity
+            style={[
+              styles.modelButton,
+              styles.customModelButton,
+              isCustomModel && styles.modelButtonSelected,
+            ]}
+            onPress={() => setShowCustomInput(true)}
+            activeOpacity={0.7}
+          >
+            <Icon name={AppIcons.addCircleOutline} size={16} color={isCustomModel ? Colors.surface : Colors.primary} />
+            <Text 
+              style={[
+                styles.modelButtonText,
+                styles.customModelButtonText,
+                isCustomModel && styles.modelButtonTextSelected,
+              ]}
+            >
+              {isCustomModel ? selectedModel : '自定义'}
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
+
+        {/* 自定义模型输入弹窗 */}
+        {showCustomInput && (
+          <View style={styles.customInputOverlay}>
+            <View style={styles.customInputBox}>
+              <Text style={styles.customInputTitle}>输入自定义模型名称</Text>
+              <TextInput
+                style={styles.customInput}
+                value={customModel}
+                onChangeText={setCustomModel}
+                placeholder={`例如: ${providerName === '阿里云百炼' ? 'qwen-max-latest' : 'gpt-4'}`}
+                placeholderTextColor={Colors.textSecondary}
+                autoFocus
+              />
+              <View style={styles.customInputActions}>
+                <TouchableOpacity
+                  style={[styles.customInputButton, styles.customInputCancelButton]}
+                  onPress={() => {
+                    setShowCustomInput(false);
+                    setCustomModel('');
+                  }}
+                >
+                  <Text style={styles.customInputCancelText}>取消</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.customInputButton, styles.customInputConfirmButton]}
+                  onPress={handleCustomModelSubmit}
+                >
+                  <Text style={styles.customInputConfirmText}>确定</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        )}
+      </View>
+    );
+  }
+
+  // 模式2: 下拉模式（模型较多）
+  return (
+    <View style={styles.modelSelectorContainer}>
+      {/* 当前选择 */}
+      <TouchableOpacity
+        style={styles.dropdownTrigger}
+        onPress={() => setShowDropdown(!showDropdown)}
+        activeOpacity={0.7}
+      >
+        <Text style={styles.dropdownTriggerText} numberOfLines={1}>
+          {isCustomModel ? `${selectedModel} (自定义)` : selectedModel}
+        </Text>
+        <Icon 
+          name={showDropdown ? AppIcons.chevronUpOutline : AppIcons.chevronDownOutline} 
+          size={20} 
+          color={Colors.textSecondary} 
+        />
+      </TouchableOpacity>
+
+      {/* 下拉列表 - 使用 Modal */}
+      <Modal
+        visible={showDropdown}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => {}} // 空函数，避免输入法收起时自动关闭
+      >
+        <Pressable 
+          style={styles.modalOverlay}
+          onPress={() => setShowDropdown(false)}
+        >
+          <Pressable 
+            style={styles.dropdownMenuModal} 
+            onPress={(e) => e.stopPropagation()}
+          >
+            {/* 搜索框 */}
+            <View style={styles.searchContainer}>
+              <Icon name={AppIcons.searchOutline} size={18} color={Colors.textSecondary} />
+              <TextInput
+                style={styles.searchInput}
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                placeholder="搜索模型..."
+                placeholderTextColor={Colors.textSecondary}
+              />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => setSearchQuery('')}>
+                <Icon name={AppIcons.closeCircle} size={18} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* 模型列表 */}
+          <FlatList
+            data={filteredModels}
+            keyExtractor={(item) => item.id}
+            style={styles.dropdownList}
+            nestedScrollEnabled
+            renderItem={({ item: model }) => (
+              <TouchableOpacity
+                style={[
+                  styles.dropdownItem,
+                  selectedModel === model.id && styles.dropdownItemSelected,
+                ]}
+                onPress={() => handleSelectModel(model.id)}
+              >
+                <Text 
+                  style={[
+                    styles.dropdownItemText,
+                    selectedModel === model.id && styles.dropdownItemTextSelected,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {model.name}
+                </Text>
+                {selectedModel === model.id && (
+                  <Icon name={AppIcons.checkmarkCircle} size={20} color={Colors.primary} />
+                )}
+              </TouchableOpacity>
+            )}
+            ListEmptyComponent={
+              <Text style={styles.noResultsText}>未找到匹配的模型</Text>
+            }
+            ListFooterComponent={
+              <>
+                <View style={styles.dropdownDivider} />
+                <TouchableOpacity
+                  style={[styles.dropdownItem, styles.customModelItem]}
+                  onPress={() => {
+                    setShowDropdown(false);
+                    setShowCustomInput(true);
+                  }}
+                >
+                  <Icon name={AppIcons.addCircleOutline} size={20} color={Colors.primary} />
+                  <Text style={styles.customModelItemText}>自定义模型名称</Text>
+                </TouchableOpacity>
+              </>
+            }
+          />
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* 自定义模型输入弹窗 */}
+      {showCustomInput && (
+        <View style={styles.customInputOverlay}>
+          <View style={styles.customInputBox}>
+            <Text style={styles.customInputTitle}>输入自定义模型名称</Text>
+            <Text style={styles.customInputHint}>
+              当前 {providerName} 提供商支持的模型可能未全部列出，您可以手动输入模型名称。
+            </Text>
+            <TextInput
+              style={styles.customInput}
+              value={customModel}
+              onChangeText={setCustomModel}
+              placeholder={`例如: ${providerName === '阿里云百炼' ? 'qwen-max-latest' : 'gpt-4'}`}
+              placeholderTextColor={Colors.textSecondary}
+              autoFocus
+            />
+            <View style={styles.customInputActions}>
+              <TouchableOpacity
+                style={[styles.customInputButton, styles.customInputCancelButton]}
+                onPress={() => {
+                  setShowCustomInput(false);
+                  setCustomModel('');
+                }}
+              >
+                <Text style={styles.customInputCancelText}>取消</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.customInputButton, styles.customInputConfirmButton]}
+                onPress={handleCustomModelSubmit}
+                disabled={!customModel.trim()}
+              >
+                <Text style={[
+                  styles.customInputConfirmText,
+                  !customModel.trim() && styles.customInputConfirmTextDisabled
+                ]}>确定</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
+    </View>
+  );
+};
+
+/**
  * API Key 设置页面主组件
  */
 export const APIKeySettingsScreen: React.FC = () => {
@@ -212,8 +504,9 @@ export const APIKeySettingsScreen: React.FC = () => {
   const [apiKeys, setApiKeys] = useState<Record<AIProvider, string>>({
     gemini: '',
     deepseek: '',
+    alibaba: '',
   });
-  const [selectedProvider, setSelectedProvider] = useState<AIProvider>('gemini');
+  const [selectedProvider, setSelectedProvider] = useState<AIProvider>('alibaba');
   const [editingProvider, setEditingProvider] = useState<AIProvider | null>(null);
   
   // 模型配置状态（使用默认配置初始化）
@@ -222,12 +515,13 @@ export const APIKeySettingsScreen: React.FC = () => {
   
   // 智能补全设置
   const [completionSettings, setCompletionSettings] = useState<CompletionSettings>(completionService.getSettings());
-  const [showCompletionSettings, setShowCompletionSettings] = useState(false);
+  // 智能补全设置已合并到高级设置的 completion 角色中
 
   // 动态模型列表状态
   const [dynamicModels, setDynamicModels] = useState<Record<AIProvider, ModelInfo[]>>({
     gemini: [],
     deepseek: [],
+    alibaba: [],
   });
   const [loadingModels, setLoadingModels] = useState<AIProvider | null>(null);
   const [modelLoadError, setModelLoadError] = useState<string | null>(null);
@@ -241,7 +535,7 @@ export const APIKeySettingsScreen: React.FC = () => {
   useEffect(() => {
     const fetchModels = async () => {
       // 为有 API Key 的提供商获取模型列表
-      for (const provider of ['gemini', 'deepseek'] as AIProvider[]) {
+      for (const provider of ['gemini', 'deepseek', 'alibaba'] as AIProvider[]) {
         const key = apiKeys[provider];
         if (key) {
           await loadDynamicModels(provider, key);
@@ -300,15 +594,18 @@ export const APIKeySettingsScreen: React.FC = () => {
       
       const geminiKey = await apiKeyStorage.getAPIKey('gemini');
       const deepseekKey = await apiKeyStorage.getAPIKey('deepseek');
+      const alibabaKey = await apiKeyStorage.getAPIKey('alibaba');
       const selected = await apiKeyStorage.getSelectedProvider();
       const configs = await apiKeyStorage.getAllModelConfigs();
 
       setApiKeys({
         gemini: geminiKey || '',
         deepseek: deepseekKey || '',
+        alibaba: alibabaKey || '',
       });
       setSelectedProvider(selected);
-      setModelConfigs(configs);
+      // 确保加载的配置包含所有角色，缺失的使用默认值
+      setModelConfigs({ ...DEFAULT_MODEL_CONFIGS, ...configs });
       setCompletionSettings(completionService.getSettings());
     } catch (error) {
       console.error('Failed to load API keys:', error);
@@ -361,7 +658,7 @@ export const APIKeySettingsScreen: React.FC = () => {
       setEditingProvider(null);
 
       // 如果是第一个配置的 Key，自动选中并更新模型配置
-      if (!apiKeys.gemini && !apiKeys.deepseek) {
+      if (!apiKeys.gemini && !apiKeys.deepseek && !apiKeys.alibaba) {
         await apiKeyStorage.setSelectedProvider(provider);
         setSelectedProvider(provider);
         
@@ -373,6 +670,7 @@ export const APIKeySettingsScreen: React.FC = () => {
           executor: newConfig,
           intentRewriter: newConfig,
           reflector: newConfig,
+          completion: newConfig,
         });
       } else {
         // 如果保存的是当前选中的提供商，也需要更新模型配置
@@ -447,6 +745,7 @@ export const APIKeySettingsScreen: React.FC = () => {
         executor: newConfig,
         intentRewriter: newConfig,
         reflector: newConfig,
+        completion: newConfig,
       });
       Alert.alert('成功', '已统一所有模型配置');
     } catch (error) {
@@ -521,112 +820,6 @@ export const APIKeySettingsScreen: React.FC = () => {
             ))}
         </View>
 
-        {/* 智能补全设置 */}
-        <View style={styles.advancedSection}>
-          <TouchableOpacity
-            style={styles.advancedHeader}
-            onPress={() => setShowCompletionSettings(!showCompletionSettings)}
-            activeOpacity={0.7}
-          >
-            <View style={styles.advancedHeaderLeft}>
-              <Icon name="flash-outline" size={18} color={Colors.textSecondary} />
-              <Text style={styles.advancedHeaderText}>智能补全设置</Text>
-            </View>
-            <Icon 
-              name={showCompletionSettings ? AppIcons.chevronUp : AppIcons.chevronDown} 
-              size={18} 
-              color={Colors.textSecondary} 
-            />
-          </TouchableOpacity>
-          
-          {showCompletionSettings && (
-            <View style={styles.advancedContent}>
-              <Text style={styles.advancedDescription}>
-                配置输入框的智能补全功能。AI 补全会消耗少量 Token。
-              </Text>
-
-              {/* 启用补全 */}
-              <View style={styles.settingRow}>
-                <View style={styles.settingInfo}>
-                  <Text style={styles.settingLabel}>启用智能补全</Text>
-                  <Text style={styles.settingDesc}>在输入时显示补全建议</Text>
-                </View>
-                <Switch
-                  value={completionSettings.enabled}
-                  onValueChange={(val) => handleCompletionSettingChange('enabled', val)}
-                  trackColor={{ false: Colors.border, true: Colors.primary }}
-                />
-              </View>
-
-              {/* 启用 AI 补全 */}
-              <View style={[styles.settingRow, !completionSettings.enabled && styles.disabledRow]}>
-                <View style={styles.settingInfo}>
-                  <Text style={styles.settingLabel}>启用 AI 预测</Text>
-                  <Text style={styles.settingDesc}>使用 AI 模型预测后续内容（更智能）</Text>
-                </View>
-                <Switch
-                  value={completionSettings.aiEnabled}
-                  onValueChange={(val) => handleCompletionSettingChange('aiEnabled', val)}
-                  disabled={!completionSettings.enabled}
-                  trackColor={{ false: Colors.border, true: Colors.primary }}
-                />
-              </View>
-
-              {/* AI 延迟 */}
-              <View style={[styles.settingRow, (!completionSettings.enabled || !completionSettings.aiEnabled) && styles.disabledRow]}>
-                <View style={styles.settingInfo}>
-                  <Text style={styles.settingLabel}>AI 触发延迟</Text>
-                  <Text style={styles.settingDesc}>停止输入 {completionSettings.aiDebounceMs}ms 后触发</Text>
-                </View>
-                <View style={styles.debounceControl}>
-                   <TouchableOpacity 
-                      onPress={() => handleCompletionSettingChange('aiDebounceMs', Math.max(200, completionSettings.aiDebounceMs - 100))}
-                      style={styles.debounceBtn}
-                   >
-                      <Text style={styles.debounceBtnText}>-</Text>
-                   </TouchableOpacity>
-                   <Text style={styles.debounceValue}>{completionSettings.aiDebounceMs}ms</Text>
-                   <TouchableOpacity 
-                      onPress={() => handleCompletionSettingChange('aiDebounceMs', Math.min(2000, completionSettings.aiDebounceMs + 100))}
-                      style={styles.debounceBtn}
-                   >
-                      <Text style={styles.debounceBtnText}>+</Text>
-                   </TouchableOpacity>
-                </View>
-              </View>
-
-              {/* AI 补全模型选择 */}
-              <View style={[styles.settingRow, (!completionSettings.enabled || !completionSettings.aiEnabled) && styles.disabledRow]}>
-                <View style={styles.settingInfo}>
-                  <Text style={styles.settingLabel}>补全模型</Text>
-                  <Text style={styles.settingDesc}>用于智能补全的模型</Text>
-                </View>
-                <View style={styles.modelPickerContainer}>
-                  {(['gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-2.5-pro'] as const).map((model) => (
-                    <TouchableOpacity
-                      key={model}
-                      style={[
-                        styles.modelChip,
-                        completionSettings.aiModel === model && styles.modelChipActive,
-                        (!completionSettings.enabled || !completionSettings.aiEnabled) && styles.modelChipDisabled,
-                      ]}
-                      onPress={() => handleCompletionSettingChange('aiModel', model)}
-                      disabled={!completionSettings.enabled || !completionSettings.aiEnabled}
-                    >
-                      <Text style={[
-                        styles.modelChipText,
-                        completionSettings.aiModel === model && styles.modelChipTextActive,
-                      ]}>
-                        {model.replace('gemini-', '').replace('-lite', ' Lite').replace('-flash', ' Flash').replace('-pro', ' Pro')}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-            </View>
-          )}
-        </View>
-
         {/* 高级配置：模型角色配置 */}
         <View style={styles.advancedSection}>
           <TouchableOpacity
@@ -668,9 +861,9 @@ export const APIKeySettingsScreen: React.FC = () => {
                     {loadingModels === selectedProvider ? '获取中...' : '刷新模型列表'}
                   </Text>
                 </TouchableOpacity>
-                {dynamicModels[selectedProvider].length > 0 && (
+                {(dynamicModels[selectedProvider]?.length ?? 0) > 0 && (
                   <Text style={styles.modelCountText}>
-                    已获取 {dynamicModels[selectedProvider].length} 个模型
+                    已获取 {dynamicModels[selectedProvider]?.length ?? 0} 个模型
                   </Text>
                 )}
               </View>
@@ -697,12 +890,12 @@ export const APIKeySettingsScreen: React.FC = () => {
               {/* 各角色配置 */}
               {(Object.keys(MODEL_ROLES) as ModelRole[]).map((role) => {
                 const roleConfig = MODEL_ROLES[role];
-                const currentConfig = modelConfigs[role];
-                const providerConfig = AI_PROVIDERS[currentConfig.provider];
+                const currentConfig = modelConfigs[role] || { provider: selectedProvider, model: AI_PROVIDERS[selectedProvider].defaultModel };
+                const providerConfig = AI_PROVIDERS[selectedProvider];
                 
-                // 优先使用动态获取的模型列表，否则使用静态配置
-                const availableModels = dynamicModels[currentConfig.provider].length > 0
-                  ? dynamicModels[currentConfig.provider]
+                // 优先使用动态获取的模型列表，否则使用静态配置（统一使用 selectedProvider 的模型列表）
+                const availableModels = (dynamicModels[selectedProvider]?.length ?? 0) > 0
+                  ? dynamicModels[selectedProvider]
                   : providerConfig.models.map(m => ({ id: m, name: m }));
                 
                 return (
@@ -717,40 +910,15 @@ export const APIKeySettingsScreen: React.FC = () => {
                     
                     <View style={styles.roleModelSelect}>
                       <Text style={styles.roleModelLabel}>模型：</Text>
-                      <ScrollView 
-                        horizontal 
-                        showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={styles.modelPicker}
-                      >
-                        {availableModels.map((model) => {
-                          const modelId = typeof model === 'string' ? model : model.id;
-                          const modelName = typeof model === 'string' ? model : model.name;
-                          return (
-                            <TouchableOpacity
-                              key={modelId}
-                              style={[
-                                styles.modelOption,
-                                currentConfig.model === modelId && styles.modelOptionSelected,
-                              ]}
-                              onPress={() => handleModelConfigChange(role, { 
-                                provider: currentConfig.provider, 
-                                model: modelId 
-                              })}
-                              activeOpacity={0.7}
-                            >
-                              <Text 
-                                style={[
-                                  styles.modelOptionText,
-                                  currentConfig.model === modelId && styles.modelOptionTextSelected,
-                                ]}
-                                numberOfLines={1}
-                              >
-                                {modelName}
-                              </Text>
-                            </TouchableOpacity>
-                          );
+                      <ModelSelector
+                        models={availableModels}
+                        selectedModel={currentConfig.model}
+                        onModelChange={(model) => handleModelConfigChange(role, { 
+                          provider: currentConfig.provider, 
+                          model 
                         })}
-                      </ScrollView>
+                        providerName={providerConfig.name}
+                      />
                     </View>
                   </View>
                 );
@@ -1260,5 +1428,231 @@ const styles = StyleSheet.create({
   modelChipTextActive: {
     color: Colors.primary,
     fontWeight: '600',
+  },
+
+  // ModelSelector 样式
+  modelSelectorContainer: {
+    flex: 1,
+  },
+  
+  // 按钮组模式
+  modelButtonGroup: {
+    flexDirection: 'row',
+    gap: Spacing.xs,
+    paddingRight: Spacing.sm,
+  },
+  modelButton: {
+    paddingVertical: 6,
+    paddingHorizontal: Spacing.sm,
+    backgroundColor: Colors.backgroundSecondary,
+    borderRadius: BorderRadius.sm,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  modelButtonSelected: {
+    backgroundColor: Colors.primaryLight,
+    borderColor: Colors.primary,
+  },
+  modelButtonText: {
+    fontSize: FontSizes.xs,
+    color: Colors.textSecondary,
+  },
+  modelButtonTextSelected: {
+    color: Colors.primary,
+    fontWeight: FontWeights.medium,
+  },
+  customModelButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  customModelButtonText: {
+    color: Colors.primary,
+  },
+
+  // 下拉模式
+  dropdownTrigger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: Spacing.xs,
+    paddingHorizontal: Spacing.sm,
+    backgroundColor: Colors.backgroundSecondary,
+    borderRadius: BorderRadius.sm,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    minHeight: 36,
+  },
+  dropdownTriggerText: {
+    fontSize: FontSizes.sm,
+    color: Colors.text,
+    flex: 1,
+    marginRight: Spacing.xs,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.lg,
+  },
+  dropdownMenuModal: {
+    width: '100%',
+    maxWidth: 400,
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    ...Shadows.md,
+    maxHeight: '60%',
+  },
+  dropdownMenu: {
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    right: 0,
+    marginTop: 4,
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    ...Shadows.md,
+    maxHeight: 300,
+    zIndex: 1000,
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: FontSizes.sm,
+    color: Colors.text,
+    paddingVertical: 4,
+  },
+  dropdownList: {
+    maxHeight: 240,
+  },
+  dropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.divider,
+  },
+  dropdownItemSelected: {
+    backgroundColor: Colors.primaryLight,
+  },
+  dropdownItemText: {
+    fontSize: FontSizes.sm,
+    color: Colors.text,
+    flex: 1,
+  },
+  dropdownItemTextSelected: {
+    color: Colors.primary,
+    fontWeight: FontWeights.medium,
+  },
+  noResultsText: {
+    fontSize: FontSizes.sm,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    paddingVertical: Spacing.lg,
+  },
+  dropdownDivider: {
+    height: 1,
+    backgroundColor: Colors.border,
+    marginVertical: Spacing.xs,
+  },
+  customModelItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    borderBottomWidth: 0,
+  },
+  customModelItemText: {
+    fontSize: FontSizes.sm,
+    color: Colors.primary,
+    fontWeight: FontWeights.medium,
+  },
+
+  // 自定义输入弹窗
+  customInputOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 2000,
+  },
+  customInputBox: {
+    width: '80%',
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.lg,
+    ...Shadows.lg,
+  },
+  customInputTitle: {
+    fontSize: FontSizes.lg,
+    fontWeight: FontWeights.bold,
+    color: Colors.text,
+    marginBottom: Spacing.xs,
+  },
+  customInputHint: {
+    fontSize: FontSizes.xs,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.md,
+    lineHeight: 16,
+  },
+  customInput: {
+    backgroundColor: Colors.backgroundSecondary,
+    borderRadius: BorderRadius.md,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.sm,
+    fontSize: FontSizes.sm,
+    color: Colors.text,
+    marginBottom: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  customInputActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: Spacing.sm,
+  },
+  customInputButton: {
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
+    borderRadius: BorderRadius.md,
+    minWidth: 80,
+    alignItems: 'center',
+  },
+  customInputCancelButton: {
+    backgroundColor: Colors.backgroundSecondary,
+  },
+  customInputConfirmButton: {
+    backgroundColor: Colors.primary,
+  },
+  customInputCancelText: {
+    fontSize: FontSizes.sm,
+    color: Colors.textSecondary,
+    fontWeight: FontWeights.medium,
+  },
+  customInputConfirmText: {
+    fontSize: FontSizes.sm,
+    color: Colors.surface,
+    fontWeight: FontWeights.medium,
+  },
+  customInputConfirmTextDisabled: {
+    opacity: 0.5,
   },
 });

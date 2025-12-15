@@ -272,7 +272,9 @@ export const renderTransactionDetailTool = new DynamicStructuredTool({
 - 修改交易成功后，展示更新后的交易详情
 - 查询某条交易的完整信息
 
-不适用场景：删除成功等无需展示交易详情的操作（请用 render_result_message）`,
+不适用场景：删除成功等无需展示交易详情的操作（请用 render_result_message）
+
+💡 **必须**：提供 suggestedActions 数组（2-4个建议），在交易详情下方显示后续操作建议按钮。`,
   schema: z.object({
     id: z.number(),
     description: z.string().optional().nullable(),
@@ -288,12 +290,16 @@ export const renderTransactionDetailTool = new DynamicStructuredTool({
     paymentMethodName: z.string().optional().nullable(),
     createdByUserNickname: z.string().optional().nullable(),
     attachmentCount: z.number().optional().nullable(),
+    suggestedActions: suggestedActionsSchema,
   }),
-  func: async (transaction) => {
-    console.log('🎨 [renderTransactionDetailTool] Rendering transaction detail:', transaction.id);
+  func: async (data) => {
+    console.log('🎨 [renderTransactionDetailTool] Rendering transaction detail:', data.id);
+    if (data.suggestedActions?.length) {
+      console.log('🎨 [renderTransactionDetailTool] With suggestions:', data.suggestedActions.length);
+    }
     
     // 直接返回 JSON 字符串
-    return JSON.stringify(transaction);
+    return JSON.stringify(data);
   },
 });
 

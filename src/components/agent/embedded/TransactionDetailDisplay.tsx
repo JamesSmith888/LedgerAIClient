@@ -125,7 +125,7 @@ export const TransactionDetailDisplay: React.FC<TransactionDetailDisplayProps> =
         {renderInfoRow('card-outline', '支付方式', transaction.paymentMethodName)}
         {transaction.description && renderInfoRow('document-text-outline', '备注', transaction.description)}
         {transaction.createdByUserNickname && renderInfoRow('person-outline', '创建人', transaction.createdByUserNickname)}
-        {transaction.attachmentCount && transaction.attachmentCount > 0 && 
+        {(transaction.attachmentCount ?? 0) > 0 && 
           renderInfoRow('attach-outline', '附件', `${transaction.attachmentCount} 个`)}
       </View>
 

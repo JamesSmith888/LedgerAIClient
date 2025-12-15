@@ -149,6 +149,19 @@ export interface IntentRewriterConfig {
   confirmMediumRisk?: boolean;
   /** 批量操作确认阈值 */
   batchThreshold?: number;
+  /**
+   * 置信度阈值配置（置信度驱动决策）
+   * 控制在不同置信度下的行为：
+   * - highConfidenceThreshold: 高于此值直接执行（默认 0.7）
+   * - lowConfidenceThreshold: 低于此值主动询问用户（默认 0.4）
+   * - 在两个阈值之间：合理推测后执行
+   */
+  confidenceThresholds?: {
+    /** 高置信度阈值（>= 此值直接执行），范围 0.5-1.0，默认 0.7 */
+    high?: number;
+    /** 低置信度阈值（< 此值询问用户），范围 0.0-0.5，默认 0.4 */
+    low?: number;
+  };
 }
 
 // ============ System Prompt ============
@@ -166,15 +179,15 @@ const REWRITER_SYSTEM_PROMPT = `你是一个意图理解助手。分析用户输
 
 根据信息完整程度决定处理策略：
 
-### 高置信度（confidence >= 0.7）：直接执行
+### 高置信度（confidence >= {{HIGH_CONFIDENCE_THRESHOLD}}）：直接执行
 当用户提供的信息足够完整时，生成可执行的任务描述。
 
-### 中置信度（0.4 <= confidence < 0.7）：合理推测后执行
+### 中置信度（{{LOW_CONFIDENCE_THRESHOLD}} <= confidence < {{HIGH_CONFIDENCE_THRESHOLD}}）：合理推测后执行
 当部分信息缺失但可合理推断时：
 1. 结合常识选择最可能的默认值
 2. 生成任务描述，但在 rewrittenPrompt 中说明推测了什么
 
-### 低置信度（confidence < 0.4）：主动询问
+### 低置信度（confidence < {{LOW_CONFIDENCE_THRESHOLD}}）：主动询问
 当关键信息严重缺失时，使用 clarify 意图：
 1. intentType 设为 "clarify"
 2. clarifyQuestion 填写友好的询问语句
@@ -196,24 +209,24 @@ const REWRITER_SYSTEM_PROMPT = `你是一个意图理解助手。分析用户输
 
 ## 输出格式
 
-### 正常执行（confidence >= 0.4）
+### 正常执行（confidence >= {{LOW_CONFIDENCE_THRESHOLD}}）
 {
   "rewrittenPrompt": "清晰的任务描述",
   "intentType": "create|query|update|delete|batch|statistics|chat",
   "extractedInfo": { ... },
   "riskLevel": "low|medium|high|critical",
   "requiresConfirmation": false,
-  "confidence": 0.4-1.0
+  "confidence": {{LOW_CONFIDENCE_THRESHOLD}}-1.0
 }
 
-### 需要澄清（confidence < 0.4）
+### 需要澄清（confidence < {{LOW_CONFIDENCE_THRESHOLD}}）
 {
   "rewrittenPrompt": "需要更多信息才能执行",
   "intentType": "clarify",
   "extractedInfo": { ... },  // 已识别的部分信息
   "riskLevel": "low",
   "requiresConfirmation": false,
-  "confidence": 0.1-0.39,
+  "confidence": 0.0-{{LOW_CONFIDENCE_THRESHOLD}},
   "clarifyQuestion": "友好的询问语句，引导用户补充信息",
   "missingInfo": ["缺失信息1", "缺失信息2"]
 }
@@ -343,6 +356,10 @@ export class IntentRewriter {
       confirmHighRisk: config?.confirmHighRisk ?? true,
       confirmMediumRisk: config?.confirmMediumRisk ?? false,
       batchThreshold: config?.batchThreshold ?? 5,
+      confidenceThresholds: {
+        high: config?.confidenceThresholds?.high ?? 0.7,
+        low: config?.confidenceThresholds?.low ?? 0.4,
+      },
     };
   }
 
@@ -395,10 +412,14 @@ export class IntentRewriter {
         hour: '2-digit',
         minute: '2-digit',
       });
-      const systemPromptWithTime = REWRITER_SYSTEM_PROMPT.replace(
-        '{{CURRENT_DATETIME}}',
-        currentDateTime
-      );
+      
+      // 替换系统提示词中的占位符（时间 + 置信度阈值）
+      const systemPromptWithDynamicValues = REWRITER_SYSTEM_PROMPT
+        .replace('{{CURRENT_DATETIME}}', currentDateTime)
+        .replace(/\{\{HIGH_CONFIDENCE_THRESHOLD\}\}/g, String(this.config.confidenceThresholds.high))
+        .replace(/\{\{LOW_CONFIDENCE_THRESHOLD\}\}/g, String(this.config.confidenceThresholds.low));
+      
+      const systemPromptWithTime = systemPromptWithDynamicValues;
 
       // 构建消息 - 包含对话历史以理解上下文
       const messages: BaseMessage[] = [
@@ -707,4 +728,8 @@ export const DEFAULT_INTENT_REWRITER_CONFIG: IntentRewriterConfig = {
   confirmHighRisk: true,
   confirmMediumRisk: false,
   batchThreshold: 5,
+  confidenceThresholds: {
+    high: 0.7,  // 高置信度阈值：>= 0.7 直接执行
+    low: 0.4,   // 低置信度阈值：< 0.4 询问用户
+  },
 };

@@ -41,6 +41,14 @@ export const SettingsScreen: React.FC = () => {
             title: 'AI 设置',
             items: [
                 {
+                    icon: 'options-outline',
+                    title: 'AI 行为配置',
+                    subtitle: '自定义 AI 助手的行为和决策策略',
+                    route: 'AgentConfig',
+                    showArrow: true,
+                    iconColor: '#8B5CF6',
+                },
+                {
                     icon: AppIcons.lockOutline,
                     title: 'API Key 配置',
                     subtitle: '配置您的 AI 模型 API Key',

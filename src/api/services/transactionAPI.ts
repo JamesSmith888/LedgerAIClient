@@ -56,6 +56,20 @@ export interface MonthlySummaryResponse {
     totalCount: number;
 }
 
+export interface CategorySummaryResponse {
+    totalAmount: number;
+    totalCount: number;
+    categories: Array<{
+        categoryId: number;
+        categoryName: string;
+        icon: string;
+        color: string;
+        amount: number;
+        count: number;
+        percentage: number;
+    }>;
+}
+
 export const transactionAPI = {
 
     create: async (transaction: Omit<Transaction, 'id'>): Promise<Transaction> => {
@@ -192,6 +206,30 @@ export const transactionAPI = {
             `/api/transactions/monthly-summary?${params.toString()}`
         );
         console.log('/api/transactions/monthly-summary响应数据:', response.data);
+        return response.data;
+    },
+
+    /**
+     * 获取分类汇总明细（用于明细弹窗）
+     */
+    getCategorySummary: async (
+        ledgerId: number | null,
+        startTime: string,
+        endTime: string,
+        type: 'EXPENSE' | 'INCOME'
+    ): Promise<CategorySummaryResponse> => {
+        const params = new URLSearchParams();
+        if (ledgerId) {
+            params.append('ledgerId', ledgerId.toString());
+        }
+        params.append('startTime', startTime);
+        params.append('endTime', endTime);
+        params.append('type', type);
+
+        const response = await apiClient.get<CategorySummaryResponse>(
+            `/api/agent/category-summary?${params.toString()}`
+        );
+        console.log('/api/agent/category-summary响应数据:', response.data);
         return response.data;
     },
 };

@@ -3,8 +3,12 @@ import { View, Text, TouchableOpacity, StyleSheet, LayoutAnimation, Platform, UI
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { Colors, Spacing, BorderRadius, FontSizes } from '../../constants/theme';
 
-// 启用 Android 的 LayoutAnimation
-if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+// 启用 Android 的 LayoutAnimation (仅在旧架构下)
+if (
+  Platform.OS === 'android' && 
+  UIManager.setLayoutAnimationEnabledExperimental &&
+  !global.RN$Bridgeless // 排除 Bridgeless (新架构)
+) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 

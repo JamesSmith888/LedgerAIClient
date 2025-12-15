@@ -191,6 +191,78 @@ async function fetchDeepSeekModels(apiKey: string): Promise<FetchModelsResult> {
 }
 
 /**
+ * 动态获取阿里云百炼支持的模型列表
+ * 
+ * 阿里云百炼使用 OpenAI 兼容 API
+ * API 文档: https://help.aliyun.com/zh/model-studio/developer-reference/compatibility-of-openai-with-dashscope
+ */
+async function fetchAlibabaBailianModels(apiKey: string): Promise<FetchModelsResult> {
+    const cacheKey = `alibaba-${apiKey.slice(-8)}`;
+    const cached = modelListCache.get(cacheKey);
+
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+        return { success: true, models: cached.models, cached: true };
+    }
+
+    try {
+        const response = await fetch(
+            'https://dashscope.aliyuncs.com/compatible-mode/v1/models',
+            {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json',
+                },
+            }
+        );
+
+        if (!response.ok) {
+            const error = await response.text();
+            return {
+                success: false,
+                models: [],
+                error: `API 请求失败 (${response.status}): ${error}`
+            };
+        }
+
+        const data = await response.json() as { data?: any[] };
+
+        // 解析 OpenAI 格式的模型列表
+        const models: ModelInfo[] = (data.data || [])
+            .filter((m: any) => m.id && !m.id.includes('embedding'))
+            .map((m: any) => ({
+                id: m.id,
+                name: m.id,
+                description: m.owned_by ? `Owned by: ${m.owned_by}` : undefined,
+                supportsVision: m.id.includes('vl'), // qwen-vl-* 支持视觉
+                supportsTools: true,
+            }))
+            .sort((a: ModelInfo, b: ModelInfo) => {
+                // qwen-max 优先
+                if (a.id.includes('max') && !b.id.includes('max')) return -1;
+                if (!a.id.includes('max') && b.id.includes('max')) return 1;
+                // plus 次之
+                if (a.id.includes('plus') && !b.id.includes('plus')) return -1;
+                if (!a.id.includes('plus') && b.id.includes('plus')) return 1;
+                return a.id.localeCompare(b.id);
+            });
+
+        // 缓存结果
+        modelListCache.set(cacheKey, { models, timestamp: Date.now() });
+
+        console.log(`✅ [ModelFactory] Fetched ${models.length} Alibaba Bailian models`);
+        return { success: true, models };
+    } catch (error) {
+        console.error('❌ [ModelFactory] Failed to fetch Alibaba Bailian models:', error);
+        return {
+            success: false,
+            models: [],
+            error: error instanceof Error ? error.message : '网络请求失败'
+        };
+    }
+}
+
+/**
  * 动态获取指定提供商支持的模型列表
  * 
  * @param provider AI 提供商
@@ -214,6 +286,8 @@ export async function fetchAvailableModels(
             return fetchGeminiModels(apiKey);
         case 'deepseek':
             return fetchDeepSeekModels(apiKey);
+        case 'alibaba':
+            return fetchAlibabaBailianModels(apiKey);
         default:
             return {
                 success: false,
@@ -315,6 +389,30 @@ class DeepSeekModelStrategy implements ModelCreationStrategy {
     }
 }
 
+/**
+ * 阿里云百炼模型创建策略
+ * 阿里云百炼兼容 OpenAI API 格式
+ */
+class AlibabaBailianModelStrategy implements ModelCreationStrategy {
+    private static readonly BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+
+    createModel(config: ModelCreationConfig): BaseChatModel {
+        return new ChatOpenAI({
+            model: config.model,
+            apiKey: config.apiKey,
+            temperature: config.temperature ?? 0,
+            maxRetries: config.maxRetries ?? 2,
+            configuration: {
+                baseURL: AlibabaBailianModelStrategy.BASE_URL,
+            },
+        });
+    }
+
+    getProviderConfig(): AIProviderConfig {
+        return AI_PROVIDERS.alibaba;
+    }
+}
+
 // ============ 策略注册表 ============
 
 /**
@@ -323,6 +421,7 @@ class DeepSeekModelStrategy implements ModelCreationStrategy {
 const strategyRegistry = new Map<AIProvider, ModelCreationStrategy>([
     ['gemini', new GeminiModelStrategy()],
     ['deepseek', new DeepSeekModelStrategy()],
+    ['alibaba', new AlibabaBailianModelStrategy()],
 ]);
 
 /**
