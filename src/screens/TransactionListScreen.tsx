@@ -1268,21 +1268,23 @@ export const TransactionListScreen: React.FC = () => {
                 {/* 预算区域 - 融入统计卡片 */}
                 {filterLedger && (
                     <View style={styles.budgetSection}>
-                        <Text style={styles.budgetSectionLabel}>预算</Text>
-                        {/* 预算切换按钮 - 绝对定位在右上角 */}
+                        {/* 预算切换按钮 - 整行可点击 */}
                         {budgetOverview && (
                             <TouchableOpacity
-                                style={styles.budgetToggleButton}
+                                style={styles.budgetSectionHeader}
                                 onPress={() => setBudgetVisible(!budgetVisible)}
                                 activeOpacity={0.6}
-                                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                             >
+                                <Text style={styles.budgetSectionLabel}>预算</Text>
                                 <Icon
                                     name={budgetVisible ? 'chevron-up-circle' : 'chevron-down-circle'}
                                     size={18}
                                     color={Colors.primary}
                                 />
                             </TouchableOpacity>
+                        )}
+                        {!budgetOverview && (
+                            <Text style={styles.budgetSectionLabel}>预算</Text>
                         )}
                         
                         {/* 加载中占位 */}
@@ -1360,14 +1362,13 @@ export const TransactionListScreen: React.FC = () => {
 
                 {/* ========== ✨ 新增：日历热力图 ========== */}
                 <View style={styles.calendarSection}>
-                    <Text style={styles.calendarSectionLabel}>热力图</Text>
-                    {/* 热力图切换按钮 - 绝对定位在右上角 */}
+                    {/* 热力图切换按钮 - 整行可点击 */}
                     <TouchableOpacity
-                        style={styles.calendarToggleButton}
+                        style={styles.calendarSectionHeader}
                         onPress={handleToggleCalendar}
                         activeOpacity={0.6}
-                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                     >
+                        <Text style={styles.calendarSectionLabel}>热力图</Text>
                         <Icon
                             name={calendarVisible ? 'chevron-up-circle' : 'chevron-down-circle'}
                             size={18}
@@ -2143,12 +2144,20 @@ const styles = StyleSheet.create({
         zIndex: 10,
         padding: 2,
     },
+    budgetSectionHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingTop: 6,
+        paddingRight: Spacing.sm,
+        paddingLeft: Spacing.sm,
+        paddingBottom: 6,
+        minHeight: 28,
+    },
     budgetSectionLabel: {
         fontSize: FontSizes.xs,
         color: Colors.primary,
         fontWeight: FontWeights.semibold,
-        paddingTop: 6,
-        paddingLeft: Spacing.sm,
         letterSpacing: 0.5,
     },
     budgetLoadingPlaceholder: {
@@ -2260,12 +2269,20 @@ const styles = StyleSheet.create({
         zIndex: 10,
         padding: 2,
     },
+    calendarSectionHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingTop: 6,
+        paddingRight: Spacing.sm,
+        paddingLeft: Spacing.sm,
+        paddingBottom: 6,
+        minHeight: 28,
+    },
     calendarSectionLabel: {
         fontSize: FontSizes.xs,
         color: Colors.income,
         fontWeight: FontWeights.semibold,
-        paddingTop: 6,
-        paddingLeft: Spacing.sm,
         letterSpacing: 0.5,
     },
 
@@ -2304,17 +2321,15 @@ const styles = StyleSheet.create({
     // 导航箭头
     navArrowLeft: {
         position: 'absolute',
-        left: -4,
-        top: '50%',
-        marginTop: -20, // 居中微调
+        left: 4,
+        top: 24, // 与月份标题高度对齐
         zIndex: 10,
         padding: Spacing.sm,
     },
     navArrowRight: {
         position: 'absolute',
-        right: -4,
-        top: '50%',
-        marginTop: -20,
+        right: 4,
+        top: 24, // 与月份标题高度对齐
         zIndex: 10,
         padding: Spacing.sm,
     },

@@ -408,13 +408,13 @@ export const AgentScreen: React.FC = () => {
         setHasAPIKey(hasKey);
         
         // 如果已配置，关闭引导
-        if (hasKey && showAPIKeyGuide) {
+        if (hasKey) {
           setShowAPIKeyGuide(false);
         }
       };
       
       recheckAPIKey();
-    }, [showAPIKeyGuide])
+    }, [])
   );
 
   // UI 状态
