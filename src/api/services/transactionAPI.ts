@@ -1,5 +1,5 @@
 import { apiClient } from '../config';
-import { Transaction } from '../../types/transaction';
+import { Transaction, AggregatedTransaction, ChildTransaction } from '../../types/transaction';
 
 export interface TransactionResponse {
     id: number;
@@ -15,6 +15,8 @@ export interface TransactionResponse {
     paymentMethodId?: number;
     attachmentCount?: number;
     source?: 'MANUAL' | 'AI'; // 交易来源
+    aggregatedAmount?: number; // 聚合总金额
+    childCount?: number; // 子交易数量
 }
 
 export interface TransactionQueryParams {
@@ -117,6 +119,33 @@ export const transactionAPI = {
             }
         );
         console.log('/api/transactions/query响应数据:', response.data);
+
+        return response.data;
+    },
+
+    /**
+     * 获取Top N交易（高性能接口，不查总数）
+     */
+    getTop: async (params: TransactionQueryParams = {}): Promise<Transaction[]> => {
+        const {
+            ledgerId,
+            type,
+            startTime,
+            endTime,
+            size = 3,
+        } = params;
+
+        const response = await apiClient.post<Transaction[]>(
+            '/api/transactions/top',
+            {
+                ledgerId,
+                type,
+                startTime,
+                endTime,
+                size,
+            }
+        );
+        console.log('/api/transactions/top响应数据:', response.data);
 
         return response.data;
     },
@@ -230,6 +259,38 @@ export const transactionAPI = {
             `/api/agent/category-summary?${params.toString()}`
         );
         console.log('/api/agent/category-summary响应数据:', response.data);
+        return response.data;
+    },
+
+    /**
+     * 追加交易（创建子交易）
+     */
+    appendTransaction: async (
+        transactionId: number | string,
+        amount: number,
+        description?: string,
+        transactionDateTime?: string
+    ): Promise<number> => {
+        const response = await apiClient.post<number>(
+            `/api/transactions/${transactionId}/append`,
+            {
+                amount,
+                description,
+                transactionDateTime: transactionDateTime || new Date().toISOString(),
+            }
+        );
+        console.log('/api/transactions/{id}/append响应数据:', response.data);
+        return response.data;
+    },
+
+    /**
+     * 获取聚合交易详情（包含父交易和所有子交易）
+     */
+    getAggregatedTransaction: async (transactionId: number | string): Promise<AggregatedTransaction> => {
+        const response = await apiClient.get<AggregatedTransaction>(
+            `/api/transactions/${transactionId}/aggregated`
+        );
+        console.log('/api/transactions/{id}/aggregated响应数据:', response.data);
         return response.data;
     },
 };

@@ -135,7 +135,6 @@ export const TransactionMoveSheet: React.FC<TransactionMoveSheetProps> = ({
                     <View style={styles.header}>
                         <View>
                             <Text style={styles.title}>移动到其他账本</Text>
-                            <Text style={styles.subtitle}>长按交易后快速整理，灵感来自 Telegram & Google 的底部抽屉设计</Text>
                         </View>
                         <TouchableOpacity onPress={onClose} style={styles.closeButton}>
                             <Text style={styles.closeIcon}>✕</Text>

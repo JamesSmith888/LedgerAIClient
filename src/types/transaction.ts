@@ -28,6 +28,25 @@ export interface Transaction {
   paymentMethodId?: number;
   attachmentCount?: number; // 附件数量
   source?: TransactionSource; // 交易来源：MANUAL-手动录入，AI-AI助手创建
+  parentId?: number; // 父交易ID（用于聚合交易）
+  aggregatedAmount?: number; // 聚合总金额（父+子）
+  childCount?: number; // 子交易数量
+}
+
+// 子交易类型
+export interface ChildTransaction {
+  id: number;
+  amount: number;
+  description?: string;
+  transactionDateTime: string;
+  createTime: string;
+}
+
+// 聚合交易类型（包含父交易和所有子交易）
+export interface AggregatedTransaction extends Transaction {
+  aggregatedAmount: number; // 聚合总金额
+  latestDateTime: string; // 最新交易时间
+  children: ChildTransaction[]; // 子交易列表
 }
 
 // 预定义的类别

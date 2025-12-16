@@ -5,6 +5,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
+    Alert,
     FlatList,
     Modal,
     Pressable,
@@ -13,6 +14,7 @@ import {
     SectionList,
     StyleSheet,
     Text,
+    TextInput,
     TouchableOpacity,
     View,
     PanResponder,
@@ -31,7 +33,7 @@ import {
     Spacing,
 } from '../constants/theme';
 import { TransactionIcons } from '../constants/icons';
-import type { Category, Transaction } from '../types/transaction';
+import type { Category, Transaction, AggregatedTransaction } from '../types/transaction';
 import { transactionAPI } from '../api/services';
 import { useCategories } from '../context/CategoryContext';
 import { useAuth } from '../context/AuthContext';
@@ -245,6 +247,23 @@ export const TransactionListScreen: React.FC = () => {
     // 记录当前打开的 Swipeable引用，用于自动关闭
     const swipeableRefs = useMemo(() => new Map<number, Swipeable>(), []);
 
+    // ========== 聚合交易展开状态 ==========
+    const [expandedTransactions, setExpandedTransactions] = useState<Map<number, Transaction[]>>(new Map());
+    const [loadingExpanded, setLoadingExpanded] = useState<Set<number>>(new Set());
+
+    // ========== 滑动状态 ==========
+    const [swipingTransactions, setSwipingTransactions] = useState<Set<number>>(new Set());
+
+    // ========== 追加交易相关状态 ==========
+    const [appendModalVisible, setAppendModalVisible] = useState<boolean>(false);
+    const [appendingTransaction, setAppendingTransaction] = useState<Transaction | null>(null);
+    const [appendAmount, setAppendAmount] = useState<string>('');
+    const [isAppending, setIsAppending] = useState<boolean>(false);
+
+    // ========== 聚合交易详情相关状态 ==========
+    const [aggregatedModalVisible, setAggregatedModalVisible] = useState<boolean>(false);
+    const [aggregatedData, setAggregatedData] = useState<AggregatedTransaction | null>(null);
+
     // ========== 明细弹窗相关状态 ==========
     const [detailModalVisible, setDetailModalVisible] = useState<boolean>(false);
     const [detailModalType, setDetailModalType] = useState<'EXPENSE' | 'INCOME'>('EXPENSE');
@@ -272,6 +291,51 @@ export const TransactionListScreen: React.FC = () => {
         if (ref) {
             ref.close();
         }
+    };
+
+    // 处理追加点击
+    const handleAppendPress = (transaction: Transaction) => {
+        setAppendingTransaction(transaction);
+        setAppendAmount('');
+        setAppendModalVisible(true);
+    };
+
+    // 确认追加
+    const confirmAppend = async () => {
+        if (!appendingTransaction || !appendAmount) return;
+        
+        const amount = parseFloat(appendAmount);
+        if (isNaN(amount) || amount <= 0) {
+            Alert.alert('错误', '请输入有效的金额');
+            return;
+        }
+
+        setIsAppending(true);
+        try {
+            await transactionAPI.appendTransaction(
+                appendingTransaction.id,
+                amount,
+                appendingTransaction.description
+            );
+            
+            setAppendModalVisible(false);
+            setAppendingTransaction(null);
+            setAppendAmount('');
+            
+            // 刷新列表
+            loadTransactions();
+        } catch (error) {
+            console.error('追加交易失败:', error);
+            Alert.alert('错误', '追加交易失败，请重试');
+        } finally {
+            setIsAppending(false);
+        }
+    };
+
+    // 显示聚合交易详情
+    const showAggregatedDetails = (data: AggregatedTransaction) => {
+        setAggregatedData(data);
+        setAggregatedModalVisible(true);
     };
 
     // 确认删除
@@ -954,30 +1018,53 @@ export const TransactionListScreen: React.FC = () => {
         );
     };
 
-    // 渲染侧滑删除按钮
+    // 渲染侧滑操作按钮（追加 + 删除）
     const renderRightActions = (progress: Animated.AnimatedInterpolation<number>, dragX: Animated.AnimatedInterpolation<number>, item: Transaction) => {
         const trans = dragX.interpolate({
-            inputRange: [-80, 0],
-            outputRange: [0, 80],
+            inputRange: [-160, 0],
+            outputRange: [0, 160],
             extrapolate: 'clamp',
         });
         
         return (
-            <View style={styles.rightActionContainer}>
-                <Animated.View
-                    style={[
-                        styles.rightAction,
-                        {
-                            transform: [{ translateX: trans }],
-                        },
-                    ]}
+            <Animated.View
+                style={[
+                    styles.rightActionContainer,
+                    {
+                        transform: [{ translateX: trans }],
+                    },
+                ]}
+            >
+                {/* 追加按钮 */}
+                <TouchableOpacity
+                    style={[styles.swipeActionButton, styles.appendButton]}
+                    onPress={() => {
+                        // 关闭滑动项
+                        const ref = swipeableRefs.get(item.id);
+                        ref?.close();
+                        // 处理追加操作
+                        handleAppendPress(item);
+                    }}
                 >
-                    <View style={styles.deleteButton}>
-                        <Icon name="trash-outline" size={24} color="#fff" />
-                        <Text style={styles.deleteButtonText}>删除</Text>
-                    </View>
-                </Animated.View>
-            </View>
+                    <Icon name="add-circle-outline" size={24} color="#fff" />
+                    <Text style={styles.swipeActionButtonText}>追加</Text>
+                </TouchableOpacity>
+
+                {/* 删除按钮 */}
+                <TouchableOpacity
+                    style={[styles.swipeActionButton, styles.deleteButton]}
+                    onPress={() => {
+                        // 关闭滑动项
+                        const ref = swipeableRefs.get(item.id);
+                        ref?.close();
+                        // 处理删除操作
+                        handleDeletePress(item);
+                    }}
+                >
+                    <Icon name="trash-outline" size={24} color="#fff" />
+                    <Text style={styles.swipeActionButtonText}>删除</Text>
+                </TouchableOpacity>
+            </Animated.View>
         );
     };
 
@@ -1000,6 +1087,19 @@ export const TransactionListScreen: React.FC = () => {
         // 优先显示昵称，其次用户名，最后显示用户ID
         const creatorName = item.createdByUserNickname || item.createdByUserName || `用户${item.createdByUserId || '未知'}`;
 
+        // 是否有子交易
+        const hasChildren = (item.childCount || 0) > 0;
+        // 显示金额：如果有聚合金额，优先显示聚合金额
+        const displayAmount = item.aggregatedAmount || item.amount;
+
+        // 展开状态
+        const isExpanded = expandedTransactions.has(item.id);
+        const isLoadingChildren = loadingExpanded.has(item.id);
+        const children = expandedTransactions.get(item.id) || [];
+        
+        // 滑动状态
+        const isSwiping = swipingTransactions.has(item.id);
+
         return (
             <Swipeable
                 ref={(ref) => {
@@ -1011,7 +1111,16 @@ export const TransactionListScreen: React.FC = () => {
                 }}
                 renderRightActions={(progress, dragX) => renderRightActions(progress, dragX, item)}
                 overshootRight={false}
-                onSwipeableWillOpen={() => handleDeletePress(item)}
+                onSwipeableOpen={() => {
+                    setSwipingTransactions(prev => new Set(prev).add(item.id));
+                }}
+                onSwipeableClose={() => {
+                    setSwipingTransactions(prev => {
+                        const next = new Set(prev);
+                        next.delete(item.id);
+                        return next;
+                    });
+                }}
             >
                 <Pressable
                     onPress={() => handleItemPress(item)}
@@ -1022,7 +1131,10 @@ export const TransactionListScreen: React.FC = () => {
                         pressed && styles.transactionCardPressed
                     ]}
                 >
-                    <Card variant="flat" style={styles.transactionCard}>
+                    <Card variant="flat" style={[
+                        styles.transactionCard,
+                        isSwiping && styles.transactionCardSwiping
+                    ]}>
                         <View style={styles.transactionRow}>
                             {/* 左侧：图标和信息 */}
                             <View style={styles.leftSection}>
@@ -1033,6 +1145,14 @@ export const TransactionListScreen: React.FC = () => {
                                     ]}
                                 >
                                     <CategoryIcon icon={category.icon} size={24} color={category.color} />
+                                    {/* 聚合交易标识 */}
+                                    {hasChildren && (
+                                        <View style={styles.aggregatedBadge}>
+                                            <Text style={styles.aggregatedBadgeText}>
+                                                {(item.childCount || 0) + 1}
+                                            </Text>
+                                        </View>
+                                    )}
                                 </View>
                                 <View style={styles.infoContainer}>
                                     {/* 第一行：主标题（固定高度） */}
@@ -1105,10 +1225,50 @@ export const TransactionListScreen: React.FC = () => {
                                             : styles.amountIncome,
                                     ]}
                                 >
-                                    {item.type === 'EXPENSE' ? '-' : '+'}¥{item.amount.toFixed(2)}
+                                    {item.type === 'EXPENSE' ? '-' : '+'}¥{displayAmount.toFixed(2)}
                                 </Text>
+                                {hasChildren && (
+                                    <Icon 
+                                        name={isExpanded ? "chevron-up" : "chevron-down"} 
+                                        size={16} 
+                                        color={Colors.textSecondary} 
+                                        style={{ marginTop: 4, alignSelf: 'flex-end' }}
+                                    />
+                                )}
                             </View>
                         </View>
+
+                        {/* 展开的子交易列表 */}
+                        {isExpanded && (
+                            <View style={styles.childrenContainer}>
+                                {isLoadingChildren ? (
+                                    <ActivityIndicator size="small" color={Colors.primary} style={{ padding: 10 }} />
+                                ) : (
+                                    children.map((child) => {
+                                        const childCategory = getCategoryById(child.categoryId);
+                                        return (
+                                            <View key={child.id} style={styles.childRow}>
+                                                <View style={styles.childLeft}>
+                                                    <View style={[styles.childDot, { backgroundColor: childCategory?.color || '#ccc' }]} />
+                                                    <Text style={styles.childTitle} numberOfLines={1}>
+                                                        {child.description || childCategory?.name}
+                                                    </Text>
+                                                    <Text style={styles.childDate}>
+                                                        {formatDate(child.transactionDateTime).split(' ')[1]}
+                                                    </Text>
+                                                </View>
+                                                <Text style={[
+                                                    styles.childAmount,
+                                                    child.type === 'EXPENSE' ? styles.amountExpense : styles.amountIncome
+                                                ]}>
+                                                    {child.type === 'EXPENSE' ? '-' : '+'}¥{child.amount.toFixed(2)}
+                                                </Text>
+                                            </View>
+                                        );
+                                    })
+                                )}
+                            </View>
+                        )}
                     </Card>
                 </Pressable>
             </Swipeable>
@@ -1116,7 +1276,47 @@ export const TransactionListScreen: React.FC = () => {
     };
 
     // ========== 点击处理 ==========
-    const handleItemPress = (item: Transaction) => {
+    const handleItemPress = async (item: Transaction) => {
+        // 如果有子交易，点击展开/折叠
+        if ((item.childCount || 0) > 0) {
+            // 如果已经展开，则折叠
+            if (expandedTransactions.has(item.id)) {
+                setExpandedTransactions(prev => {
+                    const next = new Map(prev);
+                    next.delete(item.id);
+                    return next;
+                });
+                return;
+            }
+
+            // 如果未展开，请求数据并展开
+            try {
+                setLoadingExpanded(prev => new Set(prev).add(item.id));
+                const aggregated = await transactionAPI.getAggregatedTransaction(item.id);
+                
+                if (aggregated.children && aggregated.children.length > 0) {
+                    setExpandedTransactions(prev => {
+                        const next = new Map(prev);
+                        next.set(item.id, aggregated.children!);
+                        return next;
+                    });
+                } else {
+                    toast.show('未找到子交易');
+                }
+            } catch (error) {
+                console.error('查询聚合交易失败:', error);
+                toast.show('加载子交易失败');
+            } finally {
+                setLoadingExpanded(prev => {
+                    const next = new Set(prev);
+                    next.delete(item.id);
+                    return next;
+                });
+            }
+            return;
+        }
+        
+        // 正常编辑流程
         const parent = navigation.getParent();
         if (parent) {
             parent.navigate('AddTransaction', { transaction: item });
@@ -1941,6 +2141,222 @@ export const TransactionListScreen: React.FC = () => {
                 </Pressable>
             </Modal>
 
+            {/* 追加交易弹窗 */}
+            <Modal
+                visible={appendModalVisible}
+                transparent
+                animationType="fade"
+                onRequestClose={() => {}}
+            >
+                <Pressable
+                    style={styles.deleteModalOverlay}
+                    onPress={() => setAppendModalVisible(false)}
+                >
+                    <TouchableOpacity activeOpacity={1} onPress={() => {}}>
+                        <View style={[styles.deleteModalContainer, { width: '90%', maxWidth: 400 }]}>
+                            <View style={[styles.deleteModalIconContainer, { backgroundColor: Colors.primary + '15' }]}>
+                                <Icon name="add-circle" size={32} color={Colors.primary} />
+                            </View>
+                            <Text style={styles.deleteModalTitle}>追加交易</Text>
+                            <Text style={styles.deleteModalMessage}>
+                                向此交易追加新的金额，将自动记录为一笔子交易
+                            </Text>
+                            
+                            {appendingTransaction && (
+                                <View style={styles.deletePreviewCard}>
+                                    <Text style={styles.deletePreviewText} numberOfLines={1}>
+                                        {appendingTransaction.description || '无备注'}
+                                    </Text>
+                                    <Text style={[
+                                        styles.deletePreviewAmount,
+                                        appendingTransaction.type === 'EXPENSE' ? styles.amountExpense : styles.amountIncome
+                                    ]}>
+                                        当前：¥{appendingTransaction.amount.toFixed(2)}
+                                    </Text>
+                                </View>
+                            )}
+
+                            {/* 金额输入 */}
+                            <View style={styles.appendAmountContainer}>
+                                <Text style={styles.appendAmountLabel}>追加金额</Text>
+                                <View style={styles.appendAmountInputWrapper}>
+                                    <Text style={styles.appendAmountSymbol}>¥</Text>
+                                    <TextInput
+                                        style={styles.appendAmountInput}
+                                        value={appendAmount}
+                                        onChangeText={setAppendAmount}
+                                        placeholder="0.00"
+                                        keyboardType="decimal-pad"
+                                        autoFocus
+                                    />
+                                </View>
+                            </View>
+
+                            <View style={styles.deleteModalActions}>
+                                <TouchableOpacity
+                                    style={styles.deleteModalCancelButton}
+                                    onPress={() => setAppendModalVisible(false)}
+                                    disabled={isAppending}
+                                >
+                                    <Text style={styles.deleteModalCancelText}>取消</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[styles.deleteModalConfirmButton, { backgroundColor: Colors.primary }]}
+                                    onPress={confirmAppend}
+                                    disabled={isAppending || !appendAmount}
+                                >
+                                    {isAppending ? (
+                                        <ActivityIndicator color="#fff" size="small" />
+                                    ) : (
+                                        <Text style={styles.deleteModalConfirmText}>确认追加</Text>
+                                    )}
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </TouchableOpacity>
+                </Pressable>
+            </Modal>
+
+            {/* 聚合交易详情弹窗 */}
+            <Modal
+                visible={aggregatedModalVisible}
+                transparent
+                animationType="slide"
+                onRequestClose={() => setAggregatedModalVisible(false)}
+            >
+                <Pressable
+                    style={styles.modalOverlay}
+                    onPress={() => setAggregatedModalVisible(false)}
+                >
+                    <Pressable
+                        onPress={(e) => e.stopPropagation()}
+                        style={styles.detailSheet}
+                    >
+                        {/* 拖拽指示器 */}
+                        <View style={styles.sheetHandle} />
+
+                        {/* 标题栏 */}
+                        <View style={styles.sheetHeader}>
+                            <Text style={styles.sheetTitle}>聚合交易详情</Text>
+                            <TouchableOpacity
+                                style={styles.sheetCloseButton}
+                                onPress={() => setAggregatedModalVisible(false)}
+                            >
+                                <Text style={styles.sheetCloseButtonText}>✕</Text>
+                            </TouchableOpacity>
+                        </View>
+
+                        {/* 聚合交易内容 */}
+                        <ScrollView style={styles.detailContent}>
+                            {aggregatedData && (
+                                <>
+                                    {/* 总金额卡片 */}
+                                    <View style={styles.detailTotalCard}>
+                                        <View>
+                                            <Text style={styles.detailTotalLabel}>聚合总额</Text>
+                                            <Text style={styles.detailEmptyText}>
+                                                共 {aggregatedData.children.length + 1} 笔记录
+                                            </Text>
+                                        </View>
+                                        <Text style={[
+                                            styles.detailTotalAmount,
+                                            aggregatedData.type === 'EXPENSE' ? styles.amountExpense : styles.amountIncome
+                                        ]}>
+                                            ¥{aggregatedData.aggregatedAmount.toFixed(2)}
+                                        </Text>
+                                    </View>
+
+                                    {/* 父交易 */}
+                                    <View style={styles.aggregatedSection}>
+                                        <View style={styles.aggregatedSectionHeader}>
+                                            <Icon name="document-text" size={16} color={Colors.primary} />
+                                            <Text style={styles.aggregatedSectionTitle}>原始记录</Text>
+                                        </View>
+                                        <View style={styles.aggregatedItemCard}>
+                                            <View style={styles.aggregatedItemLeft}>
+                                                <Text style={styles.aggregatedItemDescription}>
+                                                    {aggregatedData.description || '无备注'}
+                                                </Text>
+                                                <Text style={styles.aggregatedItemDate}>
+                                                    {new Date(aggregatedData.transactionDateTime).toLocaleString('zh-CN', {
+                                                        month: '2-digit',
+                                                        day: '2-digit',
+                                                        hour: '2-digit',
+                                                        minute: '2-digit'
+                                                    })}
+                                                </Text>
+                                            </View>
+                                            <Text style={[
+                                                styles.aggregatedItemAmount,
+                                                aggregatedData.type === 'EXPENSE' ? styles.amountExpense : styles.amountIncome
+                                            ]}>
+                                                ¥{aggregatedData.amount.toFixed(2)}
+                                            </Text>
+                                        </View>
+                                    </View>
+
+                                    {/* 子交易列表 */}
+                                    {aggregatedData.children.length > 0 && (
+                                        <View style={styles.aggregatedSection}>
+                                            <View style={styles.aggregatedSectionHeader}>
+                                                <Icon name="list" size={16} color={Colors.primary} />
+                                                <Text style={styles.aggregatedSectionTitle}>
+                                                    追加记录 ({aggregatedData.children.length})
+                                                </Text>
+                                            </View>
+                                            {aggregatedData.children.map((child, index) => (
+                                                <View key={child.id} style={styles.aggregatedItemCard}>
+                                                    <View style={styles.aggregatedItemLeft}>
+                                                        <View style={styles.aggregatedItemTopRow}>
+                                                            <View style={styles.aggregatedItemIndex}>
+                                                                <Text style={styles.aggregatedItemIndexText}>
+                                                                    {index + 1}
+                                                                </Text>
+                                                            </View>
+                                                            <Text style={styles.aggregatedItemDescription}>
+                                                                {child.description || '追加'}
+                                                            </Text>
+                                                        </View>
+                                                        <Text style={styles.aggregatedItemDate}>
+                                                            {new Date(child.transactionDateTime).toLocaleString('zh-CN', {
+                                                                month: '2-digit',
+                                                                day: '2-digit',
+                                                                hour: '2-digit',
+                                                                minute: '2-digit'
+                                                            })}
+                                                        </Text>
+                                                    </View>
+                                                    <Text style={[
+                                                        styles.aggregatedItemAmount,
+                                                        aggregatedData.type === 'EXPENSE' ? styles.amountExpense : styles.amountIncome
+                                                    ]}>
+                                                        ¥{child.amount.toFixed(2)}
+                                                    </Text>
+                                                </View>
+                                            ))}
+                                        </View>
+                                    )}
+
+                                    {/* 操作按钮 */}
+                                    <View style={styles.aggregatedActions}>
+                                        <TouchableOpacity
+                                            style={styles.aggregatedActionButton}
+                                            onPress={() => {
+                                                setAggregatedModalVisible(false);
+                                                handleAppendPress(aggregatedData);
+                                            }}
+                                        >
+                                            <Icon name="add-circle-outline" size={20} color={Colors.primary} />
+                                            <Text style={styles.aggregatedActionButtonText}>继续追加</Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                </>
+                            )}
+                        </ScrollView>
+                    </Pressable>
+                </Pressable>
+            </Modal>
+
             {/* 明细弹窗 */}
             <Modal
                 visible={detailModalVisible}
@@ -2618,6 +3034,11 @@ const styles = StyleSheet.create({
         shadowRadius: 2,
         elevation: 1,
     },
+    transactionCardSwiping: {
+        borderTopRightRadius: 0,
+        borderBottomRightRadius: 0,
+        borderRightWidth: 0,
+    },
     transactionRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
@@ -2955,33 +3376,29 @@ const styles = StyleSheet.create({
         color: Colors.textSecondary,
     },
 
-    // ========== 侧滑删除样式 ==========
+    // ========== 侧滑操作样式 ==========
     rightActionContainer: {
+        flexDirection: 'row',
+        alignItems: 'stretch',
+        overflow: 'hidden',
+    },
+    swipeActionButton: {
         width: 80,
         height: '100%',
         justifyContent: 'center',
         alignItems: 'center',
+        gap: 4,
     },
-    rightAction: {
-        width: '100%',
-        height: '100%',
-        justifyContent: 'center',
-        alignItems: 'center',
+    appendButton: {
+        backgroundColor: Colors.primary,
     },
     deleteButton: {
-        width: 60,
-        height: 60,
-        borderRadius: 30,
         backgroundColor: Colors.expense,
-        justifyContent: 'center',
-        alignItems: 'center',
-        ...Shadows.sm,
     },
-    deleteButtonText: {
+    swipeActionButtonText: {
         color: '#fff',
-        fontSize: 10,
-        fontWeight: 'bold',
-        marginTop: 2,
+        fontSize: FontSizes.xs,
+        fontWeight: FontWeights.bold,
     },
 
     // ========== 删除确认弹窗样式 ==========
@@ -3071,6 +3488,132 @@ const styles = StyleSheet.create({
         fontWeight: FontWeights.semibold,
         color: '#fff',
     },
+
+    // ========== 追加交易弹窗样式 ==========
+    appendAmountContainer: {
+        width: '100%',
+        marginVertical: Spacing.md,
+    },
+    appendAmountLabel: {
+        fontSize: FontSizes.sm,
+        color: Colors.textSecondary,
+        marginBottom: Spacing.xs,
+        fontWeight: FontWeights.medium,
+    },
+    appendAmountInputWrapper: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: Colors.background,
+        borderRadius: BorderRadius.lg,
+        paddingHorizontal: Spacing.lg,
+        borderWidth: 1,
+        borderColor: Colors.border,
+        height: 64, // 增加高度
+        width: '100%',
+    },
+    appendAmountSymbol: {
+        fontSize: 32, // 增大字号
+        color: Colors.textSecondary,
+        marginRight: Spacing.sm,
+        fontWeight: FontWeights.medium,
+    },
+    appendAmountInput: {
+        flex: 1,
+        fontSize: 32, // 增大字号
+        fontWeight: 'bold',
+        color: Colors.text,
+        paddingVertical: 0,
+        height: '100%',
+    },
+
+    // ========== 聚合交易详情样式 ==========
+    aggregatedSection: {
+        marginBottom: Spacing.lg,
+    },
+    aggregatedSectionHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.xs,
+        marginBottom: Spacing.sm,
+        paddingHorizontal: Spacing.xs,
+    },
+    aggregatedSectionTitle: {
+        fontSize: FontSizes.md,
+        fontWeight: FontWeights.semibold,
+        color: Colors.text,
+    },
+    aggregatedItemCard: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        backgroundColor: Colors.background,
+        padding: Spacing.md,
+        borderRadius: BorderRadius.lg,
+        marginBottom: Spacing.sm,
+        borderWidth: 1,
+        borderColor: Colors.border,
+    },
+    aggregatedItemLeft: {
+        flex: 1,
+        gap: Spacing.xs,
+    },
+    aggregatedItemTopRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.sm,
+    },
+    aggregatedItemIndex: {
+        width: 20,
+        height: 20,
+        borderRadius: 10,
+        backgroundColor: Colors.primary + '20',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    aggregatedItemIndexText: {
+        fontSize: FontSizes.xs,
+        fontWeight: FontWeights.bold,
+        color: Colors.primary,
+    },
+    aggregatedItemDescription: {
+        fontSize: FontSizes.md,
+        color: Colors.text,
+        fontWeight: FontWeights.medium,
+        flex: 1,
+    },
+    aggregatedItemDate: {
+        fontSize: FontSizes.xs,
+        color: Colors.textSecondary,
+        marginLeft: Spacing.xs,
+    },
+    aggregatedItemAmount: {
+        fontSize: FontSizes.lg,
+        fontWeight: FontWeights.bold,
+        marginLeft: Spacing.md,
+    },
+    aggregatedActions: {
+        flexDirection: 'row',
+        gap: Spacing.md,
+        marginTop: Spacing.md,
+    },
+    aggregatedActionButton: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: Spacing.xs,
+        paddingVertical: Spacing.md,
+        backgroundColor: Colors.primary + '15',
+        borderRadius: BorderRadius.lg,
+        borderWidth: 1,
+        borderColor: Colors.primary,
+    },
+    aggregatedActionButtonText: {
+        fontSize: FontSizes.md,
+        fontWeight: FontWeights.semibold,
+        color: Colors.primary,
+    },
+
     /* 明细弹窗样式 */
     detailSheet: {
         backgroundColor: Colors.surface,
@@ -3167,5 +3710,44 @@ const styles = StyleSheet.create({
         fontSize: FontSizes.md,
         color: Colors.textLight,
         marginTop: Spacing.sm,
+    },
+
+    // ========== 展开的子交易列表样式 ==========
+    childrenContainer: {
+        marginTop: Spacing.sm,
+        paddingTop: Spacing.sm,
+        borderTopWidth: 1,
+        borderTopColor: Colors.border,
+    },
+    childRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: Spacing.xs,
+        paddingHorizontal: Spacing.xs,
+    },
+    childLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flex: 1,
+        gap: Spacing.xs,
+    },
+    childDot: {
+        width: 6,
+        height: 6,
+        borderRadius: 3,
+    },
+    childTitle: {
+        fontSize: FontSizes.sm,
+        color: Colors.textSecondary,
+        flex: 1,
+    },
+    childDate: {
+        fontSize: FontSizes.xs,
+        color: Colors.textLight,
+    },
+    childAmount: {
+        fontSize: FontSizes.sm,
+        fontWeight: FontWeights.medium,
     },
 });

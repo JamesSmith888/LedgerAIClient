@@ -11,6 +11,7 @@ import {
     Pressable,
     RefreshControl,
     Modal,
+    Dimensions,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -23,7 +24,9 @@ import { useAuth } from '../context/AuthContext';
 import { LedgerSelector } from '../components/ledger/LedgerSelector';
 import { LedgerMembers } from '../components/ledger/LedgerMembers';
 import { reportAPI } from '../api/services/reportAPI';
+import { transactionAPI } from '../api/services/transactionAPI';
 import type { CategoryStatistics, TrendStatistics, TimeGranularity, TrendDataPoint } from '../types/report';
+import type { Transaction } from '../types/transaction';
 import { Ledger, LedgerType } from '../types/ledger';
 import { toast } from '../utils/toast';
 import { formatCurrency } from '../utils/helpers';
@@ -78,9 +81,9 @@ export const ReportScreen: React.FC = () => {
         }
     }, [currentLedger]);
     
-    const [activeTab, setActiveTab] = useState<TabType>('category');
+    const [activeTab, setActiveTab] = useState<TabType>('trend');
     const [chartType, setChartType] = useState<ChartType>('pie');
-    const [timeGranularity, setTimeGranularity] = useState<TimeGranularity>('month');
+    const [timeGranularity, setTimeGranularity] = useState<TimeGranularity>('day');
     const [selectedTimePreset, setSelectedTimePreset] = useState<TimeRangePreset>('month');
     
     // 多维度分析
@@ -91,6 +94,16 @@ export const ReportScreen: React.FC = () => {
     const [categoryData, setCategoryData] = useState<CategoryStatistics | null>(null);
     const [trendData, setTrendData] = useState<TrendStatistics | null>(null);
     
+    // 交易详情（点击趋势图点）
+    const [topTransactions, setTopTransactions] = useState<Transaction[]>([]);
+    const [loadingTransactions, setLoadingTransactions] = useState(false);
+    
+    // 趋势图类型：支出 | 收入
+    const [trendType, setTrendType] = useState<'expense' | 'income'>('expense');
+    
+    // 全屏横屏查看
+    const [isLandscape, setIsLandscape] = useState(false);
+
     // 加载状态
     const [isLoading, setIsLoading] = useState(false);
     const [isRefreshing, setIsRefreshing] = useState(false);
@@ -102,6 +115,59 @@ export const ReportScreen: React.FC = () => {
 
     // 选中的数据点（用于展示详情）
     const [selectedPoint, setSelectedPoint] = useState<TrendDataPoint | null>(null);
+
+    // 加载选中点的Top交易
+    useEffect(() => {
+        const fetchTopTransactions = async () => {
+            if (!selectedPoint) {
+                setTopTransactions([]);
+                return;
+            }
+
+            try {
+                setLoadingTransactions(true);
+                
+                let startTime = '';
+                let endTime = '';
+                
+                const dateStr = selectedPoint.date;
+                // 简单的日期格式判断
+                if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+                    // 按天
+                    startTime = `${dateStr}T00:00:00`;
+                    endTime = `${dateStr}T23:59:59`;
+                } else if (/^\d{4}-\d{2}$/.test(dateStr)) {
+                    // 按月
+                    const [year, month] = dateStr.split('-').map(Number);
+                    const start = new Date(year, month - 1, 1);
+                    const end = new Date(year, month, 0, 23, 59, 59);
+                    startTime = start.toISOString();
+                    endTime = end.toISOString();
+                } else {
+                    // 其他格式暂不处理
+                    setTopTransactions([]);
+                    setLoadingTransactions(false);
+                    return;
+                }
+
+                const transactions = await transactionAPI.getTop({
+                    ledgerId: filterLedger?.id,
+                    startTime,
+                    endTime,
+                    size: 3,
+                    type: 2 // 默认只看支出
+                });
+                
+                setTopTransactions(transactions);
+            } catch (e) {
+                console.error(e);
+            } finally {
+                setLoadingTransactions(false);
+            }
+        };
+
+        fetchTopTransactions();
+    }, [selectedPoint, filterLedger]);
 
     // 时间范围（默认当月）
     const [timeRange, setTimeRange] = useState<{ startTime: Date; endTime: Date }>(() => {
@@ -138,15 +204,31 @@ export const ReportScreen: React.FC = () => {
                 setCategoryData(data);
             } else if (activeTab === 'trend') {
                 // 趋势分析：查询收入+支出，不传type参数
-                const params = {
+                const trendParams = {
                     ledgerId: filterLedger?.id || null,
                     startTime: timeRange.startTime.toISOString(),
                     endTime: timeRange.endTime.toISOString(),
                     groupBy: timeGranularity,
                     dimension: 'category' as const,
                 };
-                const data = await reportAPI.getTrendStatistics(params);
-                setTrendData(data);
+                
+                // 同时加载分类数据（用于下方展示）
+                const categoryParams = {
+                    ledgerId: filterLedger?.id || null,
+                    startTime: timeRange.startTime.toISOString(),
+                    endTime: timeRange.endTime.toISOString(),
+                    groupBy: timeGranularity,
+                    dimension: 'category' as const,
+                    type: 2 as 2, // 只统计支出
+                };
+
+                const [trendRes, categoryRes] = await Promise.all([
+                    reportAPI.getTrendStatistics(trendParams),
+                    reportAPI.getStatisticsByCategory(categoryParams)
+                ]);
+                
+                setTrendData(trendRes);
+                setCategoryData(categoryRes);
             } else if (activeTab === 'dimension') {
                 // 多维度分析：只查询支出
                 const params = {
@@ -346,7 +428,7 @@ export const ReportScreen: React.FC = () => {
 
         return (
             <View style={styles.chartTypeIconRow}>
-                {(['pie', 'bar', 'line'] as const).map(type => (
+                {(['pie', 'bar'] as const).map(type => (
                     <Pressable
                         key={type}
                         style={[styles.chartIconButton, chartType === type && styles.chartIconButtonActive]}
@@ -464,61 +546,136 @@ export const ReportScreen: React.FC = () => {
         if (!trendData) return null;
 
         const isEmpty = !trendData.dataPoints || trendData.dataPoints.length === 0;
+        
+        const isExpense = trendType === 'expense';
+        const totalAmount = isExpense ? trendData.summary.totalExpense : trendData.summary.totalIncome;
+        const avgAmount = isExpense ? trendData.summary.avgExpense : trendData.summary.avgIncome;
 
         return (
             <>
-                {/* 汇总卡片 */}
-                {!isEmpty && (
-                    <View style={styles.summaryCard}>
-                        <View style={styles.summaryRow}>
-                            <View style={styles.summaryItem}>
-                                <Text style={styles.summaryLabel}>总收入</Text>
-                                <Text style={[styles.summaryValue, { color: Colors.income }]}>
-                                    {formatCurrency(trendData.summary.totalIncome)}
-                                </Text>
-                            </View>
-                            <View style={styles.summaryItem}>
-                                <Text style={styles.summaryLabel}>总支出</Text>
-                                <Text style={[styles.summaryValue, { color: Colors.expense }]}>
-                                    {formatCurrency(trendData.summary.totalExpense)}
-                                </Text>
-                            </View>
-                        </View>
-                        <View style={styles.summaryDivider} />
-                        <View style={styles.summaryRow}>
-                            <View style={styles.summaryItem}>
-                                <Text style={styles.summaryLabel}>净收益</Text>
-                                <Text style={[
-                                    styles.summaryValue,
-                                    { color: trendData.summary.netBalance >= 0 ? Colors.income : Colors.expense }
-                                ]}>
-                                    {formatCurrency(trendData.summary.netBalance)}
-                                </Text>
-                            </View>
-                            <View style={styles.summaryItem}>
-                                <Text style={styles.summaryLabel}>记录数</Text>
-                                <Text style={styles.summaryValue}>
-                                    {trendData.summary.totalCount}笔
-                                </Text>
-                            </View>
-                        </View>
-                    </View>
-                )}
-
                 {/* 趋势图表 */}
                 <BaseChart
                     loading={isLoading}
                     error={error}
                     isEmpty={isEmpty}
-                    title="收支趋势"
-                    subtitle={`${timeGranularity === 'day' ? '按天' : timeGranularity === 'week' ? '按周' : timeGranularity === 'month' ? '按月' : '按年'}统计`}
+                    title=""
+                    subtitle=""
                     emptyMessage="该时间范围内暂无数据"
                 >
+                    {/* 自定义头部 */}
+                    <View style={{ marginBottom: Spacing.lg, paddingHorizontal: Spacing.xs }}>
+                        {/* 标题行：支出 ▼ */}
+                        <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginBottom: Spacing.md, position: 'relative' }}>
+                             <Pressable 
+                                onPress={() => setTrendType(isExpense ? 'income' : 'expense')}
+                                style={{ flexDirection: 'row', alignItems: 'center', padding: Spacing.xs }}
+                            >
+                                <Text style={{ fontSize: FontSizes.lg, fontWeight: FontWeights.bold, color: Colors.text }}>
+                                    {isExpense ? '支出' : '收入'}
+                                </Text>
+                                <Icon name="caret-down" size={14} color={Colors.text} style={{ marginLeft: 4 }} />
+                            </Pressable>
+                            
+                            {/* 横屏按钮 */}
+                            <Pressable 
+                                onPress={() => setIsLandscape(true)}
+                                style={{ position: 'absolute', right: 0, padding: Spacing.xs }}
+                            >
+                                <Icon name="expand-outline" size={20} color={Colors.textSecondary} />
+                            </Pressable>
+                        </View>
+
+                        <Text style={{ fontSize: FontSizes.md, color: Colors.textSecondary, marginBottom: 4 }}>
+                            总{isExpense ? '支出' : '收入'}: <Text style={{ color: Colors.text, fontWeight: FontWeights.bold }}>{formatCurrency(totalAmount)}</Text>
+                        </Text>
+                        <Text style={{ fontSize: FontSizes.md, color: Colors.textSecondary }}>
+                            平均值: <Text style={{ color: Colors.text }}>{formatCurrency(avgAmount)}</Text>
+                        </Text>
+                    </View>
+
                     <CustomLineChart 
                         data={trendData.dataPoints} 
+                        showIncome={!isExpense}
+                        showExpense={isExpense}
                         onDataPointClick={(point) => setSelectedPoint(point)}
                     />
                 </BaseChart>
+
+                {/* 横屏查看 Modal */}
+                <Modal
+                    visible={isLandscape}
+                    transparent={false}
+                    animationType="fade"
+                    onRequestClose={() => setIsLandscape(false)}
+                >
+                    <View style={{ flex: 1, backgroundColor: Colors.background, justifyContent: 'center', alignItems: 'center' }}>
+                        {/* 旋转容器 */}
+                        <View style={{ 
+                            width: Dimensions.get('window').height, 
+                            height: Dimensions.get('window').width, 
+                            transform: [{ rotate: '90deg' }],
+                            justifyContent: 'center',
+                            alignItems: 'center',
+                        }}>
+                            {/* 关闭按钮 */}
+                            <Pressable 
+                                onPress={() => setIsLandscape(false)}
+                                style={{ 
+                                    position: 'absolute', 
+                                    top: Spacing.lg, 
+                                    right: Spacing.lg, 
+                                    zIndex: 10,
+                                    padding: Spacing.md,
+                                    backgroundColor: 'rgba(0,0,0,0.1)',
+                                    borderRadius: 20
+                                }}
+                            >
+                                <Icon name="close" size={24} color={Colors.text} />
+                            </Pressable>
+
+                            <Text style={{ fontSize: FontSizes.xl, fontWeight: FontWeights.bold, marginBottom: Spacing.lg, color: Colors.text }}>
+                                {isExpense ? '支出趋势' : '收入趋势'}
+                            </Text>
+
+                            <CustomLineChart 
+                                data={trendData.dataPoints} 
+                                showIncome={!isExpense}
+                                showExpense={isExpense}
+                                width={Dimensions.get('window').height - Spacing.lg * 4} // 减去边距
+                                height={Dimensions.get('window').width - 100} // 减去标题和边距
+                                fitScreen={true} // 强制适应屏幕，不滚动
+                                onDataPointClick={(point) => setSelectedPoint(point)}
+                            />
+
+                            {/* 横屏下的详情弹窗 (绝对定位) */}
+                            {selectedPoint && (
+                                <Pressable 
+                                    style={{
+                                        position: 'absolute',
+                                        top: 0,
+                                        left: 0,
+                                        right: 0,
+                                        bottom: 0,
+                                        backgroundColor: 'rgba(0,0,0,0.5)',
+                                        justifyContent: 'center',
+                                        alignItems: 'center',
+                                        zIndex: 20,
+                                    }}
+                                    onPress={() => setSelectedPoint(null)}
+                                >
+                                    {renderDetailContent()}
+                                </Pressable>
+                            )}
+                        </View>
+                    </View>
+                </Modal>
+
+                {/* 分类统计概览 (仅在趋势Tab显示) */}
+                {categoryData && (
+                    <View style={{ marginTop: Spacing.md }}>
+                        {renderCategoryStatistics()}
+                    </View>
+                )}
 
                 {/* 数据表格 */}
                 {!isEmpty && (
@@ -550,7 +707,60 @@ export const ReportScreen: React.FC = () => {
         );
     };
 
+    const renderDetailContent = () => (
+        <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>{selectedPoint?.date}</Text>
+            <View style={styles.modalRow}>
+                <Text style={styles.modalLabel}>收入</Text>
+                <Text style={[styles.modalValue, { color: Colors.success }]}>
+                    {selectedPoint?.income === 0 ? '-' : `+${formatCurrency(selectedPoint?.income || 0).replace('¥', '¥')}`}
+                </Text>
+            </View>
+            <View style={styles.modalRow}>
+                <Text style={styles.modalLabel}>支出</Text>
+                <Text style={[styles.modalValue, { color: Colors.error }]}>
+                    {selectedPoint?.expense === 0 ? '-' : `-${formatCurrency(selectedPoint?.expense || 0).replace('¥', '¥')}`}
+                </Text>
+            </View>
+            <View style={styles.modalRow}>
+                <Text style={styles.modalLabel}>结余</Text>
+                <Text style={styles.modalValue}>
+                    {formatCurrency(selectedPoint?.balance || 0)}
+                </Text>
+            </View>
+
+            {/* Top 3 Transactions */}
+            {loadingTransactions ? (
+                <View style={{ marginTop: Spacing.lg, alignItems: 'center' }}>
+                    <Text style={{ color: Colors.textSecondary }}>加载详情中...</Text>
+                </View>
+            ) : topTransactions.length > 0 ? (
+                <View style={{ marginTop: Spacing.lg, borderTopWidth: 1, borderTopColor: Colors.divider, paddingTop: Spacing.md }}>
+                    <Text style={{ fontSize: FontSizes.md, fontWeight: FontWeights.bold, marginBottom: Spacing.sm, color: Colors.text }}>
+                        最大3笔支出
+                    </Text>
+                    {topTransactions.map(t => (
+                        <View key={t.id} style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: Spacing.xs, alignItems: 'center' }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                                {/* 这里可以加图标 */}
+                                <Text style={{ color: Colors.textSecondary, fontSize: FontSizes.sm }} numberOfLines={1}>
+                                    {t.description || '无描述'}
+                                </Text>
+                            </View>
+                            <Text style={{ color: Colors.text, fontWeight: FontWeights.medium, fontSize: FontSizes.sm, marginLeft: Spacing.sm }}>
+                                {formatCurrency(t.amount)}
+                            </Text>
+                        </View>
+                    ))}
+                </View>
+            ) : null}
+        </View>
+    );
+
     const renderPointDetailModal = () => {
+        // 如果是横屏模式，不渲染这个 Modal，而是由横屏视图自己处理
+        if (isLandscape) return null;
+
         return (
             <Modal
                 visible={!!selectedPoint}
@@ -562,27 +772,7 @@ export const ReportScreen: React.FC = () => {
                     style={styles.modalOverlay} 
                     onPress={() => setSelectedPoint(null)}
                 >
-                    <View style={styles.modalContent}>
-                        <Text style={styles.modalTitle}>{selectedPoint?.date}</Text>
-                        <View style={styles.modalRow}>
-                            <Text style={styles.modalLabel}>收入</Text>
-                            <Text style={[styles.modalValue, { color: Colors.success }]}>
-                                {selectedPoint?.income === 0 ? '-' : `+${formatCurrency(selectedPoint?.income || 0).replace('¥', '¥')}`}
-                            </Text>
-                        </View>
-                        <View style={styles.modalRow}>
-                            <Text style={styles.modalLabel}>支出</Text>
-                            <Text style={[styles.modalValue, { color: Colors.error }]}>
-                                {selectedPoint?.expense === 0 ? '-' : `-${formatCurrency(selectedPoint?.expense || 0).replace('¥', '¥')}`}
-                            </Text>
-                        </View>
-                        <View style={styles.modalRow}>
-                            <Text style={styles.modalLabel}>结余</Text>
-                            <Text style={styles.modalValue}>
-                                {formatCurrency(selectedPoint?.balance || 0)}
-                            </Text>
-                        </View>
-                    </View>
+                    {renderDetailContent()}
                 </Pressable>
             </Modal>
         );
