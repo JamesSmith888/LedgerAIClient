@@ -33,12 +33,22 @@ export interface Transaction {
   childCount?: number; // 子交易数量
 }
 
-// 子交易类型
+// 子交易类型 - 现在包含完整的交易信息
 export interface ChildTransaction {
   id: number;
-  amount: number;
   description?: string;
+  amount: number;
+  type: TransactionType;
   transactionDateTime: string;
+  ledgerId?: number;
+  createdByUserId?: number;
+  createdByUserName?: string;
+  createdByUserNickname?: string;
+  categoryId: number;
+  paymentMethodId?: number;
+  attachmentCount?: number;
+  source?: TransactionSource;
+  parentId?: number;
   createTime: string;
 }
 

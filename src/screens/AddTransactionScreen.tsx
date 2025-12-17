@@ -911,33 +911,111 @@ export const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({ rout
 
         {/* 保存按钮 */}
         <View style={styles.saveButtonContainer}>
-        <TouchableOpacity
-          style={[
-            styles.saveButton,
-            transactionType === 'EXPENSE'
-              ? styles.saveButtonExpense
-              : styles.saveButtonIncome,
-            (isLoading || isUploadingAttachments) && styles.saveButtonDisabled,
-          ]}
-          onPress={handleQuickSave}
-          activeOpacity={0.8}
-          disabled={isLoading || isUploadingAttachments}
-        >
-          {(isLoading || isUploadingAttachments) ? (
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <ActivityIndicator color={Colors.surface} />
-              {isUploadingAttachments && (
-                <Text style={[styles.saveButtonText, { marginLeft: 8 }]}>
-                  上传附件中...
+          <View style={{ flexDirection: 'row', gap: Spacing.sm }}>
+            {/* 追加按钮 - 仅在新增模式下显示 */}
+            {!isEditMode && (
+              <TouchableOpacity
+                style={[
+                  styles.saveButton,
+                  { flex: 1, backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.primary },
+                  (isLoading || isUploadingAttachments) && styles.saveButtonDisabled,
+                ]}
+                onPress={() => {
+                  // 验证金额
+                  const numAmount = parseFloat(amount);
+                  if (isNaN(numAmount) || numAmount <= 0) {
+                    toast.info('请输入有效金额');
+                    return;
+                  }
+                  
+                  // 验证分类
+                  if (!selectedCategory) {
+                    toast.info('请选择分类');
+                    return;
+                  }
+
+                  // 导航回列表页并打开追加弹窗
+                  // 传递当前输入的金额和分类信息
+                  console.log('🚀 点击追加按钮，准备导航...');
+                  
+                  // 直接使用 navigation 导航到 MainTabs
+                  // AddTransactionScreen 是 MainStack 的直接子页面，MainTabs 也是
+                  // 所以可以直接导航到 MainTabs
+                  try {
+                    navigation.navigate('MainTabs', {
+                      screen: 'TransactionList',
+                      params: {
+                        action: 'append',
+                        appendData: {
+                          amount: numAmount,
+                          categoryId: selectedCategory.id,
+                          description: description,
+                          transactionDateTime: transactionDate.toISOString()
+                        }
+                      }
+                    });
+                    console.log('✅ 导航命令已发送');
+                  } catch (error) {
+                    console.error('❌ 导航失败:', error);
+                    // 备用方案：尝试 getParent
+                    const parent = navigation.getParent();
+                    if (parent) {
+                        console.log('🔄 尝试使用父级导航器');
+                        parent.navigate('MainTabs', {
+                            screen: 'TransactionList',
+                            params: {
+                                action: 'append',
+                                appendData: {
+                                    amount: numAmount,
+                                    categoryId: selectedCategory.id,
+                                    description: description,
+                                    transactionDateTime: transactionDate.toISOString()
+                                }
+                            }
+                        });
+                    } else {
+                        console.error('❌ 备用方案也失败：未找到父级导航器');
+                    }
+                  }
+                }}
+                activeOpacity={0.8}
+                disabled={isLoading || isUploadingAttachments}
+              >
+                <Text style={[styles.saveButtonText, { color: Colors.primary }]}>
+                  追加到...
+                </Text>
+              </TouchableOpacity>
+            )}
+            
+            <TouchableOpacity
+              style={[
+                styles.saveButton,
+                { flex: 2 },
+                transactionType === 'EXPENSE'
+                  ? styles.saveButtonExpense
+                  : styles.saveButtonIncome,
+                (isLoading || isUploadingAttachments) && styles.saveButtonDisabled,
+              ]}
+              onPress={handleQuickSave}
+              activeOpacity={0.8}
+              disabled={isLoading || isUploadingAttachments}
+            >
+              {(isLoading || isUploadingAttachments) ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <ActivityIndicator color={Colors.surface} />
+                  {isUploadingAttachments && (
+                    <Text style={[styles.saveButtonText, { marginLeft: 8 }]}>
+                      上传附件中...
+                    </Text>
+                  )}
+                </View>
+              ) : (
+                <Text style={styles.saveButtonText}>
+                  {isEditMode ? '保存' : '完成'}
                 </Text>
               )}
-            </View>
-          ) : (
-            <Text style={styles.saveButtonText}>
-              {isEditMode ? '保存' : '完成'}
-            </Text>
-          )}
-        </TouchableOpacity>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
 

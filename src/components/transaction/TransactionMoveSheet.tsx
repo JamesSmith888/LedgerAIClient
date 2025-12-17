@@ -19,6 +19,7 @@ import {
 import type { Transaction, Category } from '../../types/transaction';
 import type { Ledger } from '../../types/ledger';
 import { LedgerType, getLedgerTypeName } from '../../types/ledger';
+import { CategoryIcon } from '../common/CategoryIcon';
 
 interface TransactionMoveSheetProps {
     visible: boolean;
@@ -143,7 +144,7 @@ export const TransactionMoveSheet: React.FC<TransactionMoveSheetProps> = ({
 
                     <View style={styles.transactionSummary}>
                         <View style={styles.transactionIconWrapper}>
-                            <Text style={styles.transactionIcon}>{category?.icon ?? '🧾'}</Text>
+                            <CategoryIcon icon={category?.icon ?? '🧾'} size={24} color={category?.color ?? Colors.primary} />
                         </View>
                         <View style={styles.transactionInfo}>
                             <Text style={styles.transactionTitle} numberOfLines={1}>
