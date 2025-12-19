@@ -145,6 +145,9 @@ export interface ReflectorConfig {
   /** 使用的模型（可以用更小的模型降低成本） */
   model?: string;
   
+  /** 自定义 Base URL（用于第三方网关） */
+  baseURL?: string;
+  
   /** 最大反思次数（防止无限循环） */
   maxReflections?: number;
   
@@ -220,6 +223,7 @@ ${renderToolNames || '（无渲染工具）'}
 
 - **渲染是必须的**: 任务完成前必须调用渲染工具展示结果
 - **数据传递**: 调用渲染工具时，必须从上一步的工具结果中提取完整数据传入（不要传空数组或空对象）
+- **检查空结果**: 如果查询类工具返回空结果（count: 0 或 empty list），且后续操作依赖该结果，应指示执行模型停止尝试后续操作，并告知用户未找到。
 - nextAction=complete: 仅当业务操作成功 **且** 已调用渲染工具
 - 如果业务成功但未渲染: nextAction=continue, progressPercent=80
 - correctionHint: adjust_strategy 时必须具体可执行，包含数据提取说明
@@ -284,6 +288,7 @@ export class Reflector {
     // 获取配置的提供商和模型
     const provider = this.config.provider || DEFAULT_PROVIDER;
     const modelName = this.config.model || DEFAULT_MODEL;
+    const baseURL = this.config.baseURL;
     
     // 使用模型工厂创建模型（支持多种 AI 提供商）
     this.model = createChatModel({
@@ -292,9 +297,10 @@ export class Reflector {
       apiKey,
       temperature: 0,
       maxRetries: 2,
+      baseURL,
     });
 
-    console.log(`🔍 [Reflector] Initialized with ${provider}/${modelName}`);
+    console.log(`🔍 [Reflector] Initialized with ${provider}/${modelName}${baseURL ? ` @ ${baseURL}` : ''}`);
     console.log(`🔍 [Reflector] Frequency: ${this.config.frequency}`);
   }
 

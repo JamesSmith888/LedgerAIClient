@@ -5,7 +5,7 @@
  * 合并显示在一个统一的对话块中，提供更好的视觉体验。
  */
 
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, Image } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import Markdown from 'react-native-markdown-display';
@@ -228,6 +228,12 @@ export const MessageGroup: React.FC<MessageGroupProps> = ({
     image: () => null,
   }), []);
 
+  const thinkingMessages = useMemo(
+    () => messages.filter(m => m.type === 'thinking' && m.content && m.content.trim()),
+    [messages]
+  );
+  const [thinkingCollapsed, setThinkingCollapsed] = useState(true);
+
   // 获取最后一条消息的时间戳
   const lastMessage = messages[messages.length - 1];
   const timestamp = lastMessage?.timestamp;
@@ -298,12 +304,7 @@ export const MessageGroup: React.FC<MessageGroupProps> = ({
 
     // 思考过程 - 小字体，低调显示
     if (isThinking) {
-      return (
-        <View key={message.id} style={styles.thinkingRow}>
-          <View style={styles.thinkingDot} />
-          <Text style={styles.thinkingText}>{message.content}</Text>
-        </View>
-      );
+      return null;
     }
 
     // 反思消息 - 以低调方式显示，类似思考过程
@@ -435,6 +436,36 @@ export const MessageGroup: React.FC<MessageGroupProps> = ({
         onLongPress={() => onLongPress?.(lastMessage)}
         delayLongPress={300}
       >
+        {thinkingMessages.length > 0 && (
+          <View style={styles.thinkingSection}>
+            <Pressable
+              style={styles.thinkingHeader}
+              onPress={() => setThinkingCollapsed(v => !v)}
+              hitSlop={10}
+            >
+              <View style={styles.thinkingHeaderLeft}>
+                <View style={styles.thinkingDot} />
+                <Text style={styles.thinkingHeaderText}>思考过程</Text>
+              </View>
+              <Icon
+                name={thinkingCollapsed ? 'chevron-down-outline' : 'chevron-up-outline'}
+                size={14}
+                color={Colors.textSecondary}
+              />
+            </Pressable>
+
+            {!thinkingCollapsed && (
+              <View style={styles.thinkingBody}>
+                {thinkingMessages.map(m => (
+                  <View key={m.id} style={styles.thinkingRow}>
+                    <Text style={styles.thinkingText}>{m.content}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+        )}
+
         {messages.map((msg, index) => renderMessageContent(msg, index))}
         
         <Text style={[styles.timestamp, styles.assistantTimestamp]}>
@@ -501,6 +532,30 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginVertical: 1,
     paddingVertical: 1,
+  },
+  thinkingSection: {
+    marginVertical: 2,
+  },
+  thinkingHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+    paddingHorizontal: 4,
+  },
+  thinkingHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  thinkingHeaderText: {
+    fontSize: FontSizes.sm,
+    color: Colors.textSecondary,
+    marginLeft: 6,
+  },
+  thinkingBody: {
+    paddingLeft: 14,
+    paddingRight: 4,
+    paddingBottom: 4,
   },
   toolCallRow: {
     marginVertical: 2,

@@ -17,7 +17,7 @@ import {
 import { Icon } from '../common';
 import { Colors, Spacing, FontSizes, BorderRadius, Shadows, FontWeights } from '../../constants/theme';
 
-export type AgentMenuAction = 'new_chat' | 'tools' | 'memory' | 'settings' | 'suggestion_settings' | 'clear_chat' | 'reconnect' | 'background' | 'agent_config';
+export type AgentMenuAction = 'new_chat' | 'tools' | 'memory' | 'settings' | 'suggestion_settings' | 'toggle_completion' | 'clear_chat' | 'reconnect' | 'background' | 'agent_config';
 
 interface AgentHeaderMenuProps {
   visible: boolean;
@@ -26,6 +26,7 @@ interface AgentHeaderMenuProps {
   isConnected: boolean;
   toolCount: number;
   totalToolCount: number;
+  enableCompletion?: boolean;
 }
 
 export const AgentHeaderMenu: React.FC<AgentHeaderMenuProps> = ({
@@ -35,6 +36,7 @@ export const AgentHeaderMenu: React.FC<AgentHeaderMenuProps> = ({
   isConnected,
   toolCount,
   totalToolCount,
+  enableCompletion = true,
 }) => {
   const handleAction = (action: AgentMenuAction) => {
     onClose();
@@ -42,6 +44,11 @@ export const AgentHeaderMenu: React.FC<AgentHeaderMenuProps> = ({
     setTimeout(() => {
       onAction(action);
     }, 100);
+  };
+
+  const handleToggleCompletion = () => {
+    // 需求：点击开关不关闭“更多操作”弹窗
+    onAction('toggle_completion');
   };
 
   return (
@@ -62,20 +69,6 @@ export const AgentHeaderMenu: React.FC<AgentHeaderMenuProps> = ({
 
               {/* 菜单项列表 */}
               <View style={styles.itemsContainer}>
-                {/* 新建对话 */}
-                <TouchableOpacity
-                  style={styles.menuItem}
-                  onPress={() => handleAction('new_chat')}
-                >
-                  <View style={[styles.iconContainer, { backgroundColor: Colors.primaryLight }]}>
-                    <Icon name="add" size={20} color={Colors.primary} />
-                  </View>
-                  <Text style={styles.menuLabel}>新建对话</Text>
-                  <Icon name="chevron-forward" size={16} color={Colors.textSecondary} />
-                </TouchableOpacity>
-
-                <View style={styles.divider} />
-
                 {/* 工具管理 */}
                 <TouchableOpacity
                   style={styles.menuItem}
@@ -105,6 +98,39 @@ export const AgentHeaderMenu: React.FC<AgentHeaderMenuProps> = ({
                   </View>
                   <Text style={styles.menuLabel}>智能建议</Text>
                   <Icon name="chevron-forward" size={16} color={Colors.textSecondary} />
+                </TouchableOpacity>
+
+                <View style={styles.divider} />
+
+                {/* 输入补全开关 */}
+                <TouchableOpacity
+                  style={styles.menuItem}
+                  onPress={handleToggleCompletion}
+                  activeOpacity={0.8}
+                >
+                  <View style={[styles.iconContainer, { backgroundColor: 'rgba(59, 130, 246, 0.12)' }]}>
+                    <Icon name="text-outline" size={20} color={Colors.primary} />
+                  </View>
+                  <View style={styles.labelContainer}>
+                    <Text style={styles.menuLabel}>输入补全</Text>
+                    <Text style={styles.subLabel}>
+                      {enableCompletion ? '已开启' : '已关闭'}
+                    </Text>
+                  </View>
+                  {/* 自绘开关：关闭态圆点在左，开启态圆点在右 */}
+                  <View
+                    style={[
+                      styles.switchTrack,
+                      enableCompletion ? styles.switchTrackOn : styles.switchTrackOff,
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.switchThumb,
+                        enableCompletion ? styles.switchThumbOn : styles.switchThumbOff,
+                      ]}
+                    />
+                  </View>
                 </TouchableOpacity>
 
                 <View style={styles.divider} />
@@ -234,6 +260,34 @@ const styles = StyleSheet.create({
   },
   itemsContainer: {
     paddingVertical: Spacing.sm,
+  },
+
+  switchTrack: {
+    width: 44,
+    height: 26,
+    borderRadius: 13,
+    padding: 2,
+    justifyContent: 'center',
+  },
+  switchTrackOn: {
+    backgroundColor: Colors.primary,
+  },
+  switchTrackOff: {
+    backgroundColor: Colors.border,
+  },
+  switchThumb: {
+    position: 'absolute',
+    top: 2,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: Colors.surface,
+  },
+  switchThumbOn: {
+    left: 20,
+  },
+  switchThumbOff: {
+    left: 2,
   },
   menuItem: {
     flexDirection: 'row',

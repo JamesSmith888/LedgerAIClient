@@ -210,13 +210,17 @@ export const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
   /**
    * 处理"始终允许"
    */
-  const handleAlwaysAllow = useCallback(() => {
+  const handleAlwaysAllow = useCallback(async () => {
     if (!request || !onAlwaysAllow) return;
     
     // 对于领域工具，使用 toolName.action 作为 key
     const action = request.toolArgs?.action as string | undefined;
     const key = action ? `${request.toolName}.${action}` : request.toolName;
-    onAlwaysAllow(key);
+    
+    // 先保存权限（可能是异步操作）
+    await Promise.resolve(onAlwaysAllow(key));
+    
+    // 权限保存完成后，再触发确认
     handleConfirm();
   }, [request, onAlwaysAllow, handleConfirm]);
 

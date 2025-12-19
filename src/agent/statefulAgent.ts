@@ -94,14 +94,20 @@ export interface StatefulAgentOptions {
     executorProvider?: AIProvider;
     /** 执行模型名称 */
     executorModel?: string;
+    /** 执行模型自定义 Base URL（用于第三方网关） */
+    executorBaseURL?: string;
     /** 意图改写模型的提供商 */
     intentRewriterProvider?: AIProvider;
     /** 意图改写模型名称 */
     intentRewriterModel?: string;
+    /** 意图改写模型自定义 Base URL */
+    intentRewriterBaseURL?: string;
     /** 反思模型的提供商 */
     reflectorProvider?: AIProvider;
     /** 反思模型名称 */
     reflectorModel?: string;
+    /** 反思模型自定义 Base URL */
+    reflectorBaseURL?: string;
   };
 }
 
@@ -276,15 +282,18 @@ export function createStatefulAgent(apiKey: string, options?: StatefulAgentOptio
   // 获取模型和提供商配置，默认使用 DEFAULT_MODEL 和 DEFAULT_PROVIDER
   const executorProvider = modelConfig?.executorProvider || DEFAULT_PROVIDER;
   const executorModelName = modelConfig?.executorModel || DEFAULT_MODEL;
+  const executorBaseURL = modelConfig?.executorBaseURL;
   const intentRewriterProvider = modelConfig?.intentRewriterProvider || DEFAULT_PROVIDER;
   const intentRewriterModelName = modelConfig?.intentRewriterModel || DEFAULT_MODEL;
+  const intentRewriterBaseURL = modelConfig?.intentRewriterBaseURL;
   const reflectorProvider = modelConfig?.reflectorProvider || DEFAULT_PROVIDER;
   const reflectorModelName = modelConfig?.reflectorModel || DEFAULT_MODEL;
+  const reflectorBaseURL = modelConfig?.reflectorBaseURL;
 
   console.log('🔧 [StatefulAgent] Model Configuration:');
-  console.log(`  - Executor: ${executorProvider}/${executorModelName}`);
-  console.log(`  - Intent Rewriter: ${intentRewriterProvider}/${intentRewriterModelName}`);
-  console.log(`  - Reflector: ${reflectorProvider}/${reflectorModelName}`);
+  console.log(`  - Executor: ${executorProvider}/${executorModelName}${executorBaseURL ? ` @ ${executorBaseURL}` : ''}`);
+  console.log(`  - Intent Rewriter: ${intentRewriterProvider}/${intentRewriterModelName}${intentRewriterBaseURL ? ` @ ${intentRewriterBaseURL}` : ''}`);
+  console.log(`  - Reflector: ${reflectorProvider}/${reflectorModelName}${reflectorBaseURL ? ` @ ${reflectorBaseURL}` : ''}`);
 
   // 初始化组件
   const logger = new AgentLogger({
@@ -302,6 +311,7 @@ export function createStatefulAgent(apiKey: string, options?: StatefulAgentOptio
     batchThreshold: userPreferences?.batchThreshold ?? 5,
     model: intentRewriterModelName,
     provider: intentRewriterProvider,  // 使用配置的提供商
+    baseURL: intentRewriterBaseURL,  // 传递自定义 Base URL
     confidenceThresholds: userPreferences?.intentRewriterConfidenceThresholds,  // 传入置信度阈值配置
   });
   
@@ -319,6 +329,7 @@ export function createStatefulAgent(apiKey: string, options?: StatefulAgentOptio
     availableTools: tools,  // 动态注入可用工具列表
     model: reflectorModelName,
     provider: reflectorProvider,  // 使用配置的提供商
+    baseURL: reflectorBaseURL,  // 传递自定义 Base URL
     confidenceThresholds: userPreferences?.reflectorConfidenceThresholds,  // 传入置信度阈值配置
   });
   
@@ -360,6 +371,7 @@ export function createStatefulAgent(apiKey: string, options?: StatefulAgentOptio
       apiKey: apiKey,
       temperature: 0,
       maxRetries: 2,
+      baseURL: executorBaseURL,
     },
     tools
   );
@@ -867,7 +879,7 @@ export function createStatefulAgent(apiKey: string, options?: StatefulAgentOptio
         const intentType = currentRewrittenIntent.intentType;
         if (intentType === 'update' || intentType === 'delete') {
           // 修改/删除操作需要先确定目标记录
-          taskInstruction += `\n\n**执行原则**: 执行${intentType === 'update' ? '修改' : '删除'}操作前，必须先查询确认目标记录存在并获取其唯一标识，不要假设或猜测标识值。`;
+          taskInstruction += `\n\n**执行原则**: 执行${intentType === 'update' ? '修改' : '删除'}操作前，必须先查询确认目标记录存在并获取其唯一标识。**如果查询结果为空，请直接告知用户未找到记录，不要尝试${intentType === 'update' ? '修改' : '删除'}，也不要重复查询。**`;
         }
         
         taskInstruction += '\n\n**注意**: 请严格按照任务描述执行，完成后必须调用渲染工具展示结果。';
@@ -905,9 +917,26 @@ export function createStatefulAgent(apiKey: string, options?: StatefulAgentOptio
           : msg instanceof AIMessage ? 'AI'
           : msg instanceof ToolMessage ? 'Tool'
           : 'Unknown';
-        const content = typeof msg.content === 'string' 
-          ? msg.content.substring(0, 200) + (msg.content.length > 200 ? '...' : '')
-          : JSON.stringify(msg.content).substring(0, 200);
+        
+        // 智能格式化内容：避免打印巨大的 base64 图片数据
+        let content: string;
+        if (typeof msg.content === 'string') {
+          content = msg.content.substring(0, 200) + (msg.content.length > 200 ? '...' : '');
+        } else if (Array.isArray(msg.content)) {
+          // 多模态消息：显示各部分类型，不显示完整内容
+          const parts = msg.content.map((part: any) => {
+            if (part.type === 'text') {
+              const textContent = part.text || '';
+              return `[text: ${typeof textContent === 'string' ? textContent.substring(0, 50) : String(textContent)}...]`;
+            }
+            if (part.type === 'image_url') return `[image]`;
+            return `[${part.type}]`;
+          }).join(', ');
+          content = `MultiModal(${msg.content.length} parts): ${parts}`;
+        } else {
+          content = JSON.stringify(msg.content).substring(0, 200);
+        }
+        
         console.log(`  [${idx}] ${msgType}: ${content}`);
       });
 
@@ -1034,10 +1063,25 @@ export function createStatefulAgent(apiKey: string, options?: StatefulAgentOptio
         }
         console.log('📥 [StatefulAgent] ========== LLM RESPONSE END ==========');
 
-        // 检查响应是否有效
-        // 注意：如果有 tool_calls，即使 content 为空也是有效响应
+        // 提取并展示模型推理过程
         const aiMsg = response as AIMessage;
         const hasToolCalls = aiMsg.tool_calls && aiMsg.tool_calls.length > 0;
+        
+        // 1. 尝试获取显式的推理内容 (如 DeepSeek R1 的 reasoning_content)
+        const reasoningContent = (aiMsg.response_metadata as any)?.reasoning_content || (aiMsg.additional_kwargs as any)?.reasoning_content;
+        
+        if (reasoningContent) {
+          console.log('🧠 [StatefulAgent] Found explicit reasoning content');
+          callbacks?.onStep?.({ type: 'thinking', content: reasoningContent });
+        } 
+        // 2. 如果有工具调用，文本内容通常是思考过程 (CoT)
+        else if (hasToolCalls && typeof aiMsg.content === 'string' && aiMsg.content.trim().length > 0) {
+          console.log('🧠 [StatefulAgent] Found CoT reasoning with tool calls');
+          callbacks?.onStep?.({ type: 'thinking', content: aiMsg.content.trim() });
+        }
+
+        // 检查响应是否有效
+        // 注意：如果有 tool_calls，即使 content 为空也是有效响应
         const hasContent = response && response.content && 
           (typeof response.content === 'string' ? response.content.trim().length > 0 : true);
         

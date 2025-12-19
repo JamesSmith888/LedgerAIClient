@@ -11,6 +11,9 @@
 
 import { NativeModules, NativeEventEmitter, Platform, PermissionsAndroid } from 'react-native';
 
+// Re-export audio player service from a stable module path
+export { audioPlayerService } from './audioPlayerService';
+
 // 获取原生模块
 const { AudioRecorderModule } = NativeModules;
 

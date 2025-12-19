@@ -49,6 +49,7 @@ import { AI_PROVIDERS, apiKeyStorage } from '../services/apiKeyStorage';
 import { userPreferenceMemory } from '../services/userPreferenceMemory';
 import { completionService } from '../services/completionService';
 import { agentConfigStorage, AgentConfig } from '../services/agentConfigStorage';
+import { audioPlayerService } from '../services/audioRecorderService';
 
 // WebSocket 配置
 const DEV_WS_URL = 'ws://localhost:8080/ws';
@@ -91,6 +92,8 @@ export const AgentScreen: React.FC = () => {
     enabled: true, // 默认开启（修复建议不显示问题）
     maxCount: 3,
   });
+  // 输入补全设置
+  const [completionEnabled, setCompletionEnabled] = useState(true);
 
   // 分类和支付方式状态
   const [categories, setCategories] = useState<CategoryResponse[]>([]);
@@ -152,6 +155,16 @@ export const AgentScreen: React.FC = () => {
     
     fetchContextData();
   }, [currentLedger?.id]);
+
+  // 加载补全设置
+  useEffect(() => {
+    const loadCompletionSettings = async () => {
+      await completionService.initialize();
+      const settings = completionService.getSettings();
+      setCompletionEnabled(settings.enabled);
+    };
+    loadCompletionSettings();
+  }, []);
 
   /**
    * 构建运行时上下文
@@ -532,6 +545,12 @@ export const AgentScreen: React.FC = () => {
       setPreviewImages([attachment]);
       setPreviewImageIndex(0);
       setShowImageViewer(true);
+    } else if (attachment.type === 'audio') {
+      // 音频：点击播放/停止
+      audioPlayerService.toggle(attachment.uri).catch((e: unknown) => {
+        console.error('❌ [AgentScreen] Failed to play audio:', e);
+        Alert.alert('播放失败', e instanceof Error ? e.message : '无法播放该语音消息');
+      });
     } else {
       // 其他类型附件暂不支持预览
       Alert.alert('提示', '暂不支持预览此类型文件');
@@ -700,6 +719,13 @@ export const AgentScreen: React.FC = () => {
         break;
       case 'suggestion_settings':
         setShowSuggestionSettings(true);
+        break;
+      case 'toggle_completion':
+        setCompletionEnabled(prev => {
+          const next = !prev;
+          completionService.updateSettings({ enabled: next });
+          return next;
+        });
         break;
       case 'agent_config':
         navigation.navigate('AgentConfig');
@@ -1183,6 +1209,7 @@ export const AgentScreen: React.FC = () => {
           enableVoice={true}
           currentProvider={currentProvider}
           topSuggestion={topSuggestion}
+          enableCompletion={completionEnabled}
         />
       </KeyboardAvoidingView>
 
@@ -1233,6 +1260,7 @@ export const AgentScreen: React.FC = () => {
           const action = pendingConfirmation?.toolArgs?.action as string | undefined;
           const key = action ? toolName : pendingConfirmation?.toolName || toolName;
           toggleAlwaysAllowed(key, true);
+          // 注意：ConfirmationDialog 的 handleAlwaysAllow 会在调用此回调后自动调用 handleConfirm()
         }}
       />
 
@@ -1244,6 +1272,7 @@ export const AgentScreen: React.FC = () => {
         isConnected={isConnected}
         toolCount={toolStats.enabled}
         totalToolCount={toolStats.total}
+        enableCompletion={completionEnabled}
       />
 
       {/* 加载指示器 */}

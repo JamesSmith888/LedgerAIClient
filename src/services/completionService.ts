@@ -174,6 +174,17 @@ class CompletionService {
   }
 
   /**
+   * 更新设置
+   */
+  async updateSettings(newSettings: Partial<CompletionSettings>): Promise<void> {
+    await this.saveSettings(newSettings);
+    console.log('⚙️ [CompletionService] Settings updated:', this.settings);
+  }
+
+  /**
+   * 获取当前设置
+   */
+  /**
    * 初始化服务
    * 1. 加载本地缓存
    * 2. 从后端同步最新数据
@@ -352,7 +363,13 @@ class CompletionService {
     onAIResult?: (result: CompletionCandidate | null) => void
   ): CompletionCandidate[] {
     console.log('🔍 [CompletionService] query() called, prefix:', JSON.stringify(prefix));
-    console.log('🔍 [CompletionService] Settings:', JSON.stringify(this.settings));
+    // 注意：aiModel 是历史遗留字段（已不作为模型选择来源，模型选择以 apiKeyStorage completion 角色配置为准）
+    console.log('🔍 [CompletionService] Settings:', JSON.stringify({
+      enabled: this.settings.enabled,
+      aiEnabled: this.settings.aiEnabled,
+      aiDebounceMs: this.settings.aiDebounceMs,
+      maxLocalCache: this.settings.maxLocalCache,
+    }));
     
     if (!this.settings.enabled || !prefix || prefix.length < 1) {
       console.log('🔍 [CompletionService] Query skipped: enabled=', this.settings.enabled, 'prefix=', prefix);
@@ -485,10 +502,10 @@ class CompletionService {
     console.log('🤖 [CompletionService] AI completion for:', prefix);
 
     try {
-      // 1. 获取 API Key 和配置
-      const activeKey = await apiKeyStorage.getActiveAPIKey();
-      if (!activeKey) {
-        console.log('🤖 [CompletionService] No active API key, skipping AI completion');
+      // 1. 获取 API Key 和配置 (使用 completion 角色配置)
+      const roleConfig = await apiKeyStorage.getModelForRole('completion');
+      if (!roleConfig.apiKey) {
+        console.log('🤖 [CompletionService] No API key for completion role, skipping');
         return null;
       }
 
@@ -535,13 +552,13 @@ ${conversationContextStr}
       const userPrompt = `用户已输入: "${prefix}"
 请补全:`;
 
-      // 5. 创建模型并调用（使用配置的模型）
-      const modelName = this.settings.aiModel || 'gemini-2.5-flash-lite';
+      // 5. 创建模型并调用
       const model = createChatModel({
-        provider: activeKey.provider,
-        model: activeKey.provider === 'gemini' ? modelName : 'deepseek-chat',
-        apiKey: activeKey.apiKey,
+        provider: roleConfig.provider,
+        model: roleConfig.model,
+        apiKey: roleConfig.apiKey,
         temperature: 0.1, // 低温度，更确定性的输出
+        baseURL: roleConfig.baseURL,
       });
 
       const response = await model.invoke([
@@ -801,10 +818,8 @@ ${conversationContextStr}
    * 使用 AI 生成智能建议
    */
   private async generateAISuggestions(): Promise<Array<{ label: string; message: string; icon?: string }>> {
-    const activeKey = await apiKeyStorage.getActiveAPIKey();
-    if (!activeKey) {
-      return [];
-    }
+    const roleConfig = await apiKeyStorage.getModelForRole('completion');
+    if (!roleConfig.apiKey) return [];
 
     const conversationStr = this.conversationContext
       .map(m => `${m.role === 'user' ? '用户' : 'AI助手'}: ${m.content}`)
@@ -834,12 +849,12 @@ ${conversationStr}
 [{"label": "标签", "message": "完整消息", "icon": "emoji"}]`;
 
     try {
-      const modelName = this.settings.aiModel || 'gemini-2.5-flash-lite';
       const model = createChatModel({
-        provider: activeKey.provider,
-        model: activeKey.provider === 'gemini' ? modelName : 'deepseek-chat',
-        apiKey: activeKey.apiKey,
+        provider: roleConfig.provider,
+        model: roleConfig.model,
+        apiKey: roleConfig.apiKey,
         temperature: 0.3,
+        baseURL: roleConfig.baseURL,
       });
 
       const response = await model.invoke([

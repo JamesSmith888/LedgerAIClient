@@ -7,7 +7,7 @@ import { Colors, Spacing, BorderRadius, FontSizes } from '../../constants/theme'
 if (
   Platform.OS === 'android' && 
   UIManager.setLayoutAnimationEnabledExperimental &&
-  !global.RN$Bridgeless // 排除 Bridgeless (新架构)
+  !(globalThis as any).RN$Bridgeless // 排除 Bridgeless (新架构)
 ) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
@@ -16,6 +16,10 @@ interface CollapsibleSectionProps {
   title: string;
   icon?: string;
   defaultCollapsed?: boolean;
+  /** 外部控制折叠状态（传入时组件变为受控） */
+  collapsed?: boolean;
+  /** 外部监听切换（受控/非受控都可用） */
+  onToggle?: (collapsed: boolean) => void;
   children: React.ReactNode;
   badge?: number; // 显示数量徽章
 }
@@ -37,14 +41,22 @@ export const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
   title,
   icon,
   defaultCollapsed = false,
+  collapsed,
+  onToggle,
   children,
   badge,
 }) => {
-  const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed);
+  const [innerCollapsed, setInnerCollapsed] = useState(defaultCollapsed);
+  const isControlled = typeof collapsed === 'boolean';
+  const isCollapsed = isControlled ? (collapsed as boolean) : innerCollapsed;
 
   const toggleCollapse = () => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setIsCollapsed(!isCollapsed);
+    const next = !isCollapsed;
+    if (!isControlled) {
+      setInnerCollapsed(next);
+    }
+    onToggle?.(next);
   };
 
   return (

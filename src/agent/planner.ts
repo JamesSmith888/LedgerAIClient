@@ -227,8 +227,9 @@ export class ExecutionPlanGenerator {
    * @param apiKey API 密钥
    * @param provider AI 提供商（可选，默认使用 Gemini）
    * @param model 模型名称（可选，默认使用 DEFAULT_MODEL）
+   * @param baseURL 自定义 Base URL（可选，用于第三方网关）
    */
-  setApiKey(apiKey: string, provider?: AIProvider, model?: string): void {
+  setApiKey(apiKey: string, provider?: AIProvider, model?: string, baseURL?: string): void {
     this.apiKey = apiKey;
     this.provider = provider || DEFAULT_PROVIDER;
     this.modelName = model || DEFAULT_MODEL;
@@ -240,9 +241,10 @@ export class ExecutionPlanGenerator {
       apiKey,
       temperature: 0,
       maxRetries: 2,
+      baseURL,
     });
     
-    console.log(`🧠 [Planner] LLM initialized with ${this.provider}/${this.modelName}`);
+    console.log(`🧠 [Planner] LLM initialized with ${this.provider}/${this.modelName}${baseURL ? ` @ ${baseURL}` : ''}`);
   }
 
   /**

@@ -141,6 +141,8 @@ export interface IntentRewriterConfig {
   provider?: AIProvider;
   /** 使用的模型 */
   model?: string;
+  /** 自定义 Base URL（用于第三方网关） */
+  baseURL?: string;
   /** 是否启用 */
   enabled?: boolean;
   /** 高风险操作需要确认 */
@@ -346,12 +348,13 @@ import { BaseChatModel } from "@langchain/core/language_models/chat_models";
  */
 export class IntentRewriter {
   private model: BaseChatModel | null = null;
-  private config: Required<IntentRewriterConfig>;
+  private config: Omit<Required<IntentRewriterConfig>, 'baseURL'> & { baseURL?: string };
 
   constructor(config?: IntentRewriterConfig) {
     this.config = {
       provider: config?.provider ?? DEFAULT_PROVIDER,
       model: config?.model ?? DEFAULT_MODEL,
+      baseURL: config?.baseURL,
       enabled: config?.enabled ?? true,
       confirmHighRisk: config?.confirmHighRisk ?? true,
       confirmMediumRisk: config?.confirmMediumRisk ?? false,
@@ -378,10 +381,11 @@ export class IntentRewriter {
       model: this.config.model,
       apiKey,
       temperature: 0,
-      maxRetries: 2,
+      maxRetries: 1,
+      baseURL: this.config.baseURL,
     });
 
-    console.log(`📝 [IntentRewriter] Initialized with ${this.config.provider}/${this.config.model}`);
+    console.log(`📝 [IntentRewriter] Initialized with ${this.config.provider}/${this.config.model}${this.config.baseURL ? ` @ ${this.config.baseURL}` : ''}`);
   }
 
   /**

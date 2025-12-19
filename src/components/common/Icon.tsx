@@ -98,7 +98,9 @@ export const AppIcons = {
   chevronBack: 'chevron-back',
   chevronForward: 'chevron-forward',
   chevronDown: 'chevron-down',
+  chevronDownOutline: 'chevron-down-outline',
   chevronUp: 'chevron-up',
+  chevronUpOutline: 'chevron-up-outline',
   
   // 功能
   settings: 'settings',
@@ -117,6 +119,7 @@ export const AppIcons = {
   informationCircle: 'information-circle',
   help: 'help',
   helpCircle: 'help-circle',
+  helpCircleOutline: 'help-circle-outline',
   alert: 'alert',
   alertCircle: 'alert-circle',
   warning: 'warning',

@@ -22,7 +22,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { Colors, Spacing, FontSizes, BorderRadius, Shadows, FontWeights } from '../constants/theme';
-import { Icon, AppIcons } from '../components/common';
+import { CollapsibleSection, Icon, AppIcons } from '../components/common';
 import {
   apiKeyStorage,
   AI_PROVIDERS,
@@ -33,19 +33,29 @@ import {
   ModelConfigs,
   RoleModelConfig,
   DEFAULT_MODEL_CONFIGS,
+  DEFAULT_PROVIDER,
+  ThirdPartyGatewayConfig,
 } from '../services/apiKeyStorage';
 import { fetchAvailableModels, ModelInfo, clearModelListCache } from '../agent/modelFactory';
 import { completionService, CompletionSettings } from '../services/completionService';
 import { Switch } from 'react-native';
 
+type ThirdPartyDraft = {
+  id?: string;
+  name: string;
+  baseURL: string;
+  apiKey: string;
+};
+
 interface ProviderCardProps {
   config: AIProviderConfig;
   apiKey: string;
+  baseURL?: string;  // 第三方中转站的 Base URL
   isSelected: boolean;
   isEditing: boolean;
   onSelect: () => void;
   onEdit: () => void;
-  onSave: (key: string) => void;
+  onSave: (key: string, baseURL?: string) => void;
   onCancel: () => void;
   onClear: () => void;
   onOpenHelp: () => void;
@@ -57,6 +67,7 @@ interface ProviderCardProps {
 const ProviderCard: React.FC<ProviderCardProps> = ({
   config,
   apiKey,
+  baseURL,
   isSelected,
   isEditing,
   onSelect,
@@ -68,6 +79,7 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
 }) => {
   // 输入框初始为空，用户需要手动粘贴 Key
   const [inputValue, setInputValue] = useState('');
+  const [baseURLValue, setBaseURLValue] = useState('');
   const hasKey = !!apiKey;
 
   useEffect(() => {
@@ -77,15 +89,35 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
     } else if (!isEditing) {
       setInputValue('');
     }
-  }, [apiKey, isEditing]);
+    
+    // 填充 Base URL（如果有）
+    if (isEditing && baseURL) {
+      setBaseURLValue(baseURL);
+    } else if (!isEditing) {
+      setBaseURLValue('');
+    }
+  }, [apiKey, baseURL, isEditing]);
 
   const handleSave = () => {
-    const validation = apiKeyStorage.validateAPIKeyFormat(config.id, inputValue);
-    if (!validation.valid) {
-      Alert.alert('格式错误', validation.message);
-      return;
+    // 第三方中转站需要验证完整配置
+    if (config.requiresBaseURL) {
+      const validation = apiKeyStorage.validateThirdPartyConfig({
+        apiKey: inputValue,
+        baseURL: baseURLValue,
+      });
+      if (!validation.valid) {
+        Alert.alert('格式错误', validation.message);
+        return;
+      }
+      onSave(inputValue, baseURLValue);
+    } else {
+      const validation = apiKeyStorage.validateAPIKeyFormat(config.id, inputValue);
+      if (!validation.valid) {
+        Alert.alert('格式错误', validation.message);
+        return;
+      }
+      onSave(inputValue);
     }
-    onSave(inputValue);
   };
 
   return (
@@ -99,7 +131,24 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
         <View style={styles.providerInfo}>
           <Text style={styles.providerIcon}>{config.icon}</Text>
           <View style={styles.providerText}>
-            <Text style={styles.providerName}>{config.name}</Text>
+            <View style={styles.providerNameRow}>
+              <Text style={styles.providerName}>{config.name}</Text>
+              {config.id === 'thirdparty' && (
+                <TouchableOpacity
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    Alert.alert(
+                      '什么是第三方中转站？',
+                      '第三方中转站是一种代理服务：\n\n• 你可能无法直接访问某些 AI 模型（比如 Gemini、GPT）\n• 第三方中转站帮你「转发」请求到这些 AI 服务\n• 你只需要：\n  1. 在中转站注册账号\n  2. 获取他们提供的 API Key 和网址\n  3. 填入这里即可使用\n\n常见的中转站：NewAPI、API2D 等',
+                      [{ text: '明白了' }]
+                    );
+                  }}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <Icon name={AppIcons.helpCircleOutline} size={16} color={Colors.primary} style={styles.helpIcon} />
+                </TouchableOpacity>
+              )}
+            </View>
             <Text style={styles.providerDescription}>{config.description}</Text>
           </View>
         </View>
@@ -116,7 +165,41 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
         {isEditing ? (
           // 编辑模式
           <View style={styles.editSection}>
+            {/* Base URL 输入（仅第三方中转站） */}
+            {config.requiresBaseURL && (
+              <View style={styles.inputWrapper}>
+                <View style={styles.labelWithHelp}>
+                  <Text style={styles.inputLabel}>API Base URL</Text>
+                  <TouchableOpacity
+                    onPress={() => {
+                      Alert.alert(
+                        'API Base URL 说明',
+                        '这是第三方中转站的API地址。\n\n简单来说：\n• 像 NewAPI 这样的中转服务会给你一个网址\n• 你把这个网址填在这里\n• 然后输入中转站给你的 API Key\n• 就可以通过中转站调用 AI 模型了\n\n例如：https://api.example.com/v1',
+                        [{ text: '明白了' }]
+                      );
+                    }}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <Icon name={AppIcons.helpCircleOutline} size={16} color={Colors.primary} />
+                  </TouchableOpacity>
+                </View>
+                <TextInput
+                  style={styles.keyInput}
+                  value={baseURLValue}
+                  onChangeText={setBaseURLValue}
+                  placeholder="https://your-gateway.com"
+                  placeholderTextColor={Colors.textLight}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  autoComplete="url"
+                  keyboardType="url"
+                />
+              </View>
+            )}
+            
+            {/* API Key 输入 */}
             <View style={styles.inputWrapper}>
+              <Text style={styles.inputLabel}>API Key</Text>
               <TextInput
                 style={styles.keyInput}
                 value={inputValue}
@@ -199,6 +282,244 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
             )}
           </View>
         )}
+      </View>
+    </View>
+  );
+};
+
+interface ThirdPartyProviderCardProps {
+  config: AIProviderConfig;
+  isSelected: boolean;
+  onSelectProvider: () => void;
+  onOpenHelp: () => void;
+  gateways: ThirdPartyGatewayConfig[];
+  selectedGatewayId: string | null;
+  onSelectGateway: (id: string) => void;
+  onStartAddGateway: () => void;
+  onStartEditGateway: (id: string) => void;
+  onDeleteGateway: (id: string) => void;
+  collapsed: boolean;
+  onToggleCollapsed: (collapsed: boolean) => void;
+  editingGatewayId: string | 'new' | null;
+  draft: ThirdPartyDraft;
+  onDraftChange: (patch: Partial<ThirdPartyDraft>) => void;
+  onSaveDraft: () => void;
+  onCancelEdit: () => void;
+}
+
+const ThirdPartyProviderCard: React.FC<ThirdPartyProviderCardProps> = ({
+  config,
+  isSelected,
+  onSelectProvider,
+  onOpenHelp,
+  gateways,
+  selectedGatewayId,
+  onSelectGateway,
+  onStartAddGateway,
+  onStartEditGateway,
+  onDeleteGateway,
+  collapsed,
+  onToggleCollapsed,
+  editingGatewayId,
+  draft,
+  onDraftChange,
+  onSaveDraft,
+  onCancelEdit,
+}) => {
+  const selectedGateway = useMemo(() => {
+    if (!gateways || gateways.length === 0) return undefined;
+    return gateways.find(g => g.id === selectedGatewayId) || gateways[0];
+  }, [gateways, selectedGatewayId]);
+
+  const renderGatewayTitle = (g: ThirdPartyGatewayConfig) => (g.name?.trim() ? g.name.trim() : g.baseURL);
+
+  return (
+    <View style={[styles.providerCard, isSelected && styles.providerCardSelected]}>
+      <TouchableOpacity
+        style={styles.providerHeader}
+        onPress={onSelectProvider}
+        activeOpacity={0.7}
+      >
+        <View style={styles.providerInfo}>
+          <Text style={styles.providerIcon}>{config.icon}</Text>
+          <View style={styles.providerText}>
+            <View style={styles.providerNameRow}>
+              <Text style={styles.providerName}>{config.name}</Text>
+              <TouchableOpacity
+                onPress={(e) => {
+                  e.stopPropagation();
+                  Alert.alert(
+                    '什么是第三方中转站？',
+                    '第三方中转站是一种代理服务：\n\n• 你可能无法直接访问某些 AI 模型（比如 Gemini、GPT）\n• 第三方中转站帮你「转发」请求到这些 AI 服务\n• 你只需要：\n  1. 在中转站注册账号\n  2. 获取他们提供的 API Key 和网址（Base URL）\n  3. 填入这里即可使用\n\n你可以配置多家中转站，并选择其中一家作为当前使用。',
+                    [{ text: '明白了' }]
+                  );
+                }}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Icon name={AppIcons.helpCircleOutline} size={16} color={Colors.primary} style={styles.helpIcon} />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.providerDescription}>{config.description}</Text>
+            {selectedGateway && (
+              <Text style={styles.thirdpartySelectedHint} numberOfLines={1}>
+                当前：{renderGatewayTitle(selectedGateway)}
+              </Text>
+            )}
+          </View>
+        </View>
+        <View style={[styles.radioButton, isSelected && styles.radioButtonSelected]}>
+          {isSelected && <View style={styles.radioButtonInner} />}
+        </View>
+      </TouchableOpacity>
+
+      <View style={styles.keySection}>
+        <CollapsibleSection
+          title="中转站配置"
+          icon="server-network"
+          badge={gateways?.length || 0}
+          defaultCollapsed={true}
+          collapsed={collapsed}
+          onToggle={onToggleCollapsed}
+        >
+          {gateways.length === 0 && editingGatewayId === null && (
+            <View>
+              <Text style={styles.thirdpartyEmptyText}>还没有配置中转站。添加后即可使用第三方网关。</Text>
+              <TouchableOpacity style={styles.thirdpartyAddButton} onPress={onStartAddGateway}>
+                <Icon name={AppIcons.addCircleOutline} size={18} color={Colors.primary} />
+                <Text style={styles.thirdpartyAddButtonText}>添加中转站</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {gateways.length > 0 && (
+            <View style={styles.thirdpartyList}>
+              {gateways.map(g => {
+                const isActive = g.id === (selectedGatewayId || gateways[0].id);
+                return (
+                  <View key={g.id} style={[styles.thirdpartyRow, isActive && styles.thirdpartyRowActive]}>
+                    <TouchableOpacity
+                      style={styles.thirdpartyRowLeft}
+                      onPress={() => onSelectGateway(g.id)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={[styles.radioButton, isActive && styles.radioButtonSelected]}>
+                        {isActive && <View style={styles.radioButtonInner} />}
+                      </View>
+                      <View style={styles.thirdpartyRowText}>
+                        <Text style={styles.thirdpartyRowTitle} numberOfLines={1}>{renderGatewayTitle(g)}</Text>
+                        <Text style={styles.thirdpartyRowSubtitle} numberOfLines={1}>{g.baseURL}</Text>
+                      </View>
+                    </TouchableOpacity>
+                    <View style={styles.thirdpartyRowActions}>
+                      <TouchableOpacity
+                        style={styles.keyActionButton}
+                        onPress={() => onStartEditGateway(g.id)}
+                      >
+                        <Icon name={AppIcons.createOutline} size={18} color={Colors.primary} />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.keyActionButton}
+                        onPress={() => {
+                          Alert.alert(
+                            '删除中转站',
+                            `确定要删除“${renderGatewayTitle(g)}”吗？`,
+                            [
+                              { text: '取消', style: 'cancel' },
+                              { text: '删除', style: 'destructive', onPress: () => onDeleteGateway(g.id) },
+                            ]
+                          );
+                        }}
+                      >
+                        <Icon name={AppIcons.trashOutline} size={18} color={Colors.error} />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                );
+              })}
+
+              <TouchableOpacity style={styles.thirdpartyAddButtonInline} onPress={onStartAddGateway}>
+                <Icon name={AppIcons.addCircleOutline} size={18} color={Colors.primary} />
+                <Text style={styles.thirdpartyAddButtonText}>添加中转站</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {editingGatewayId !== null && (
+            <View style={styles.thirdpartyEditor}>
+              <View style={styles.inputWrapper}>
+                <Text style={styles.inputLabel}>名称（可选）</Text>
+                <TextInput
+                  style={styles.keyInput}
+                  value={draft.name}
+                  onChangeText={(v) => onDraftChange({ name: v })}
+                  placeholder="比如：NewAPI / 公司网关"
+                  placeholderTextColor={Colors.textLight}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+
+              <View style={styles.inputWrapper}>
+                <View style={styles.labelWithHelp}>
+                  <Text style={styles.inputLabel}>API Base URL</Text>
+                  <TouchableOpacity
+                    onPress={() => {
+                      Alert.alert(
+                        'API Base URL 说明',
+                        '这是第三方中转站的 API 地址。\n\n简单理解：\n• 中转站会给你一个网址（通常以 /v1 结尾）\n• App 会把请求发到这个地址\n\n示例：\nhttps://你的域名/v1',
+                        [{ text: '明白了' }]
+                      );
+                    }}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <Icon name={AppIcons.helpCircleOutline} size={16} color={Colors.primary} />
+                  </TouchableOpacity>
+                </View>
+                <TextInput
+                  style={styles.keyInput}
+                  value={draft.baseURL}
+                  onChangeText={(v) => onDraftChange({ baseURL: v })}
+                  placeholder="https://your-gateway.com/v1"
+                  placeholderTextColor={Colors.textLight}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  autoComplete="url"
+                  keyboardType="url"
+                />
+              </View>
+
+              <View style={styles.inputWrapper}>
+                <Text style={styles.inputLabel}>API Key</Text>
+                <TextInput
+                  style={styles.keyInput}
+                  value={draft.apiKey}
+                  onChangeText={(v) => onDraftChange({ apiKey: v })}
+                  placeholder="粘贴中转站提供的 API Key"
+                  placeholderTextColor={Colors.textLight}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  autoComplete="off"
+                  textContentType="none"
+                />
+              </View>
+
+              <View style={styles.editActions}>
+                <TouchableOpacity style={styles.helpLink} onPress={onOpenHelp}>
+                  <Icon name={AppIcons.helpCircle} size={14} color={Colors.primary} />
+                  <Text style={styles.helpLinkText}>查看中转站文档</Text>
+                </TouchableOpacity>
+                <View style={styles.editButtons}>
+                  <TouchableOpacity style={styles.cancelButton} onPress={onCancelEdit}>
+                    <Text style={styles.cancelButtonText}>取消</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.saveButton} onPress={onSaveDraft}>
+                    <Text style={styles.saveButtonText}>保存</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          )}
+        </CollapsibleSection>
       </View>
     </View>
   );
@@ -505,8 +826,18 @@ export const APIKeySettingsScreen: React.FC = () => {
     gemini: '',
     deepseek: '',
     alibaba: '',
+    thirdparty: '',
   });
-  const [selectedProvider, setSelectedProvider] = useState<AIProvider>('alibaba');
+  const [thirdPartyGateways, setThirdPartyGateways] = useState<ThirdPartyGatewayConfig[]>([]);
+  const [selectedThirdPartyGatewayId, setSelectedThirdPartyGatewayId] = useState<string | null>(null);
+  const [thirdpartyCollapsed, setThirdpartyCollapsed] = useState(true);
+  const [editingThirdPartyGatewayId, setEditingThirdPartyGatewayId] = useState<string | 'new' | null>(null);
+  const [thirdPartyDraft, setThirdPartyDraft] = useState<ThirdPartyDraft>({
+    name: '',
+    baseURL: '',
+    apiKey: '',
+  });
+  const [selectedProvider, setSelectedProvider] = useState<AIProvider>(DEFAULT_PROVIDER);
   const [editingProvider, setEditingProvider] = useState<AIProvider | null>(null);
   
   // 模型配置状态（使用默认配置初始化）
@@ -522,6 +853,7 @@ export const APIKeySettingsScreen: React.FC = () => {
     gemini: [],
     deepseek: [],
     alibaba: [],
+    thirdparty: [],
   });
   const [loadingModels, setLoadingModels] = useState<AIProvider | null>(null);
   const [modelLoadError, setModelLoadError] = useState<string | null>(null);
@@ -535,9 +867,11 @@ export const APIKeySettingsScreen: React.FC = () => {
   useEffect(() => {
     const fetchModels = async () => {
       // 为有 API Key 的提供商获取模型列表
-      for (const provider of ['gemini', 'deepseek', 'alibaba'] as AIProvider[]) {
+      for (const provider of ['gemini', 'deepseek', 'alibaba', 'thirdparty'] as AIProvider[]) {
         const key = apiKeys[provider];
-        if (key) {
+        const activeThirdparty = thirdPartyGateways.find(g => g.id === selectedThirdPartyGatewayId) || thirdPartyGateways[0];
+        // 第三方网关需要同时检查 baseURL
+        if (key && (provider !== 'thirdparty' || !!activeThirdparty?.baseURL)) {
           await loadDynamicModels(provider, key);
         }
       }
@@ -546,7 +880,7 @@ export const APIKeySettingsScreen: React.FC = () => {
     if (!isLoading) {
       fetchModels();
     }
-  }, [apiKeys, isLoading]);
+  }, [apiKeys, thirdPartyGateways, selectedThirdPartyGatewayId, isLoading]);
 
   // 动态获取模型列表
   const loadDynamicModels = async (provider: AIProvider, apiKey: string) => {
@@ -554,7 +888,10 @@ export const APIKeySettingsScreen: React.FC = () => {
     setModelLoadError(null);
     
     try {
-      const result = await fetchAvailableModels(provider, apiKey);
+      // 第三方网关需要传递 baseURL
+      const activeThirdparty = thirdPartyGateways.find(g => g.id === selectedThirdPartyGatewayId) || thirdPartyGateways[0];
+      const baseURL = provider === 'thirdparty' ? activeThirdparty?.baseURL : undefined;
+      const result = await fetchAvailableModels(provider, apiKey, baseURL);
       if (result.success) {
         setDynamicModels(prev => ({
           ...prev,
@@ -581,10 +918,17 @@ export const APIKeySettingsScreen: React.FC = () => {
       return;
     }
     
+    // 第三方网关需要检查 baseURL
+    const activeThirdparty = thirdPartyGateways.find(g => g.id === selectedThirdPartyGatewayId) || thirdPartyGateways[0];
+    if (provider === 'thirdparty' && !activeThirdparty?.baseURL) {
+      Alert.alert('提示', '请先配置 Base URL');
+      return;
+    }
+    
     // 清除缓存后重新获取
     clearModelListCache(provider);
     await loadDynamicModels(provider, key);
-  }, [apiKeys]);
+  }, [apiKeys, thirdPartyGateways, selectedThirdPartyGatewayId]);
 
   const loadData = async () => {
     setIsLoading(true);
@@ -595,6 +939,9 @@ export const APIKeySettingsScreen: React.FC = () => {
       const geminiKey = await apiKeyStorage.getAPIKey('gemini');
       const deepseekKey = await apiKeyStorage.getAPIKey('deepseek');
       const alibabaKey = await apiKeyStorage.getAPIKey('alibaba');
+      const gateways = await apiKeyStorage.getThirdPartyGateways();
+      const selectedGatewayId = await apiKeyStorage.getSelectedThirdPartyGatewayId();
+      const activeGateway = gateways.find(g => g.id === selectedGatewayId) || gateways[0];
       const selected = await apiKeyStorage.getSelectedProvider();
       const configs = await apiKeyStorage.getAllModelConfigs();
 
@@ -602,8 +949,22 @@ export const APIKeySettingsScreen: React.FC = () => {
         gemini: geminiKey || '',
         deepseek: deepseekKey || '',
         alibaba: alibabaKey || '',
+        thirdparty: activeGateway?.apiKey || '',
       });
-      setSelectedProvider(selected);
+      setThirdPartyGateways(gateways);
+      setSelectedThirdPartyGatewayId(selectedGatewayId || (gateways[0]?.id ?? null));
+      
+      // 智能判断默认选中的提供商
+      // 如果当前选中的是默认值(alibaba)，但 executor 角色使用的是其他提供商
+      // 那么优先显示 executor 使用的提供商，这样更符合用户直觉
+      let finalSelected = selected;
+      if (selected === DEFAULT_PROVIDER && configs.executor.provider !== DEFAULT_PROVIDER) {
+        finalSelected = configs.executor.provider;
+        // 同时更新存储中的选中状态，保持一致
+        await apiKeyStorage.setSelectedProvider(finalSelected);
+      }
+      
+      setSelectedProvider(finalSelected);
       // 确保加载的配置包含所有角色，缺失的使用默认值
       setModelConfigs({ ...DEFAULT_MODEL_CONFIGS, ...configs });
       setCompletionSettings(completionService.getSettings());
@@ -615,15 +976,20 @@ export const APIKeySettingsScreen: React.FC = () => {
   };
 
   const handleSelectProvider = useCallback(async (provider: AIProvider) => {
-    // 需要用户配置 Key 才能选择提供商
+    // 如果未配置 API Key，直接进入编辑模式
     const hasAvailableKey = !!apiKeys[provider];
     
     if (!hasAvailableKey) {
-      Alert.alert(
-        '尚未配置',
-        `请先添加 ${AI_PROVIDERS[provider].name} 的 API Key`,
-        [{ text: '确定' }]
-      );
+      // 第三方中转站：直接展开并进入“添加中转站”流程
+      if (provider === 'thirdparty') {
+        setThirdpartyCollapsed(false);
+        setEditingThirdPartyGatewayId('new');
+        setThirdPartyDraft({ name: '', baseURL: '', apiKey: '' });
+        return;
+      }
+
+      // 其他提供商：直接进入添加 API Key 的流程
+      setEditingProvider(provider);
       return;
     }
 
@@ -644,6 +1010,7 @@ export const APIKeySettingsScreen: React.FC = () => {
           executor: newConfig,
           intentRewriter: newConfig,
           reflector: newConfig,
+          completion: newConfig,
         });
       }
     } catch (error) {
@@ -651,14 +1018,123 @@ export const APIKeySettingsScreen: React.FC = () => {
     }
   }, [apiKeys, modelConfigs]);
 
-  const handleSaveKey = useCallback(async (provider: AIProvider, key: string) => {
+  const handleSelectThirdPartyGateway = useCallback(async (id: string) => {
     try {
-      await apiKeyStorage.setAPIKey(provider, key);
-      setApiKeys(prev => ({ ...prev, [provider]: key }));
+      await apiKeyStorage.setSelectedThirdPartyGatewayId(id);
+      setSelectedThirdPartyGatewayId(id);
+
+      const gateways = await apiKeyStorage.getThirdPartyGateways();
+      const active = gateways.find(g => g.id === id) || gateways[0];
+      setThirdPartyGateways(gateways);
+      setApiKeys(prev => ({ ...prev, thirdparty: active?.apiKey || '' }));
+
+      // 切换中转站后，按该中转站回显模型选择
+      const updatedModelConfigs = await apiKeyStorage.getAllModelConfigs();
+      setModelConfigs(updatedModelConfigs);
+
+      clearModelListCache('thirdparty');
+      if (active?.apiKey && active?.baseURL) {
+        await loadDynamicModels('thirdparty', active.apiKey);
+      }
+    } catch (e) {
+      Alert.alert('错误', '切换中转站失败，请重试');
+    }
+  }, []);
+
+  const handleStartAddThirdPartyGateway = useCallback(() => {
+    setThirdpartyCollapsed(false);
+    setEditingThirdPartyGatewayId('new');
+    setThirdPartyDraft({ name: '', baseURL: '', apiKey: '' });
+  }, []);
+
+  const handleStartEditThirdPartyGateway = useCallback((id: string) => {
+    const g = thirdPartyGateways.find(x => x.id === id);
+    if (!g) return;
+    setThirdpartyCollapsed(false);
+    setEditingThirdPartyGatewayId(id);
+    setThirdPartyDraft({ id: g.id, name: g.name || '', baseURL: g.baseURL, apiKey: g.apiKey });
+  }, [thirdPartyGateways]);
+
+  const handleDeleteThirdPartyGateway = useCallback(async (id: string) => {
+    try {
+      await apiKeyStorage.deleteThirdPartyGateway(id);
+      const gateways = await apiKeyStorage.getThirdPartyGateways();
+      const selectedId = await apiKeyStorage.getSelectedThirdPartyGatewayId();
+      const active = gateways.find(g => g.id === selectedId) || gateways[0];
+
+      setThirdPartyGateways(gateways);
+      setSelectedThirdPartyGatewayId(selectedId || (gateways[0]?.id ?? null));
+      setApiKeys(prev => ({ ...prev, thirdparty: active?.apiKey || '' }));
+      clearModelListCache('thirdparty');
+    } catch (e) {
+      Alert.alert('错误', '删除失败，请重试');
+    }
+  }, []);
+
+  const handleSaveThirdPartyDraft = useCallback(async () => {
+    const validation = apiKeyStorage.validateThirdPartyConfig({
+      apiKey: thirdPartyDraft.apiKey,
+      baseURL: thirdPartyDraft.baseURL,
+    });
+    if (!validation.valid) {
+      Alert.alert('格式错误', validation.message);
+      return;
+    }
+
+    try {
+      const saved = await apiKeyStorage.upsertThirdPartyGateway({
+        id: editingThirdPartyGatewayId === 'new' ? '' : (editingThirdPartyGatewayId || ''),
+        name: thirdPartyDraft.name,
+        baseURL: thirdPartyDraft.baseURL,
+        apiKey: thirdPartyDraft.apiKey,
+      });
+
+      await apiKeyStorage.setSelectedThirdPartyGatewayId(saved.id);
+      const gateways = await apiKeyStorage.getThirdPartyGateways();
+
+      setThirdPartyGateways(gateways);
+      setSelectedThirdPartyGatewayId(saved.id);
+      setApiKeys(prev => ({ ...prev, thirdparty: saved.apiKey }));
+      setEditingThirdPartyGatewayId(null);
+      setThirdPartyDraft({ name: '', baseURL: '', apiKey: '' });
+
+      // 如果当前已选中第三方作为提供商，刷新模型
+      clearModelListCache('thirdparty');
+      await loadDynamicModels('thirdparty', saved.apiKey);
+    } catch (e: any) {
+      Alert.alert('错误', e?.message || '保存失败，请重试');
+    }
+  }, [thirdPartyDraft, editingThirdPartyGatewayId]);
+
+  const handleCancelThirdPartyEdit = useCallback(() => {
+    setEditingThirdPartyGatewayId(null);
+    setThirdPartyDraft({ name: '', baseURL: '', apiKey: '' });
+  }, []);
+
+  const handleSaveKey = useCallback(async (provider: AIProvider, key: string, baseURL?: string) => {
+    try {
+      // 第三方中转站需要保存完整配置
+      if (provider === 'thirdparty') {
+        await apiKeyStorage.setThirdPartyConfig({
+          apiKey: key,
+          baseURL: baseURL || '',
+        });
+
+        // 同步多中转站状态（兼容旧保存入口）
+        const gateways = await apiKeyStorage.getThirdPartyGateways();
+        const selectedId = await apiKeyStorage.getSelectedThirdPartyGatewayId();
+        const active = gateways.find(g => g.id === selectedId) || gateways[0];
+        setThirdPartyGateways(gateways);
+        setSelectedThirdPartyGatewayId(selectedId || (gateways[0]?.id ?? null));
+        setApiKeys(prev => ({ ...prev, thirdparty: active?.apiKey || '' }));
+      } else {
+        await apiKeyStorage.setAPIKey(provider, key);
+        setApiKeys(prev => ({ ...prev, [provider]: key }));
+      }
       setEditingProvider(null);
 
       // 如果是第一个配置的 Key，自动选中并更新模型配置
-      if (!apiKeys.gemini && !apiKeys.deepseek && !apiKeys.alibaba) {
+      if (!apiKeys.gemini && !apiKeys.deepseek && !apiKeys.alibaba && !apiKeys.thirdparty) {
         await apiKeyStorage.setSelectedProvider(provider);
         setSelectedProvider(provider);
         
@@ -687,6 +1163,7 @@ export const APIKeySettingsScreen: React.FC = () => {
               executor: newConfig,
               intentRewriter: newConfig,
               reflector: newConfig,
+              completion: newConfig,
             });
           }
         }
@@ -700,8 +1177,18 @@ export const APIKeySettingsScreen: React.FC = () => {
 
   const handleClearKey = useCallback(async (provider: AIProvider) => {
     try {
-      await apiKeyStorage.setAPIKey(provider, undefined);
-      setApiKeys(prev => ({ ...prev, [provider]: '' }));
+      if (provider === 'thirdparty') {
+        await apiKeyStorage.setThirdPartyConfig(undefined);
+        const gateways = await apiKeyStorage.getThirdPartyGateways();
+        const selectedId = await apiKeyStorage.getSelectedThirdPartyGatewayId();
+        const active = gateways.find(g => g.id === selectedId) || gateways[0];
+        setThirdPartyGateways(gateways);
+        setSelectedThirdPartyGatewayId(selectedId || (gateways[0]?.id ?? null));
+        setApiKeys(prev => ({ ...prev, thirdparty: active?.apiKey || '' }));
+      } else {
+        await apiKeyStorage.setAPIKey(provider, undefined);
+        setApiKeys(prev => ({ ...prev, [provider]: '' }));
+      }
 
       // 如果清除的是当前选中的，切换到另一个（如果有）
       if (selectedProvider === provider) {
@@ -804,19 +1291,42 @@ export const APIKeySettingsScreen: React.FC = () => {
           <Text style={styles.sectionTitle}>选择 AI 提供商</Text>
           
           {Object.values(AI_PROVIDERS).map((config) => (
-              <ProviderCard
-                key={config.id}
-                config={config}
-                apiKey={apiKeys[config.id]}
-                isSelected={selectedProvider === config.id}
-                isEditing={editingProvider === config.id}
-                onSelect={() => handleSelectProvider(config.id)}
-                onEdit={() => setEditingProvider(config.id)}
-                onSave={(key) => handleSaveKey(config.id, key)}
-                onCancel={() => setEditingProvider(null)}
-                onClear={() => handleClearKey(config.id)}
-                onOpenHelp={() => handleOpenHelp(config.id)}
-              />
+              config.id === 'thirdparty' ? (
+                <ThirdPartyProviderCard
+                  key={config.id}
+                  config={config}
+                  isSelected={selectedProvider === 'thirdparty'}
+                  onSelectProvider={() => handleSelectProvider('thirdparty')}
+                  onOpenHelp={() => handleOpenHelp('thirdparty')}
+                  gateways={thirdPartyGateways}
+                  selectedGatewayId={selectedThirdPartyGatewayId}
+                  onSelectGateway={handleSelectThirdPartyGateway}
+                  onStartAddGateway={handleStartAddThirdPartyGateway}
+                  onStartEditGateway={handleStartEditThirdPartyGateway}
+                  onDeleteGateway={handleDeleteThirdPartyGateway}
+                  collapsed={thirdpartyCollapsed}
+                  onToggleCollapsed={setThirdpartyCollapsed}
+                  editingGatewayId={editingThirdPartyGatewayId}
+                  draft={thirdPartyDraft}
+                  onDraftChange={(patch) => setThirdPartyDraft(prev => ({ ...prev, ...patch }))}
+                  onSaveDraft={handleSaveThirdPartyDraft}
+                  onCancelEdit={handleCancelThirdPartyEdit}
+                />
+              ) : (
+                <ProviderCard
+                  key={config.id}
+                  config={config}
+                  apiKey={apiKeys[config.id]}
+                  isSelected={selectedProvider === config.id}
+                  isEditing={editingProvider === config.id}
+                  onSelect={() => handleSelectProvider(config.id)}
+                  onEdit={() => setEditingProvider(config.id)}
+                  onSave={(key) => handleSaveKey(config.id, key)}
+                  onCancel={() => setEditingProvider(null)}
+                  onClear={() => handleClearKey(config.id)}
+                  onOpenHelp={() => handleOpenHelp(config.id)}
+                />
+              )
             ))}
         </View>
 
@@ -1057,13 +1567,26 @@ const styles = StyleSheet.create({
   providerText: {
     flex: 1,
   },
+  providerNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 2,
+  },
+  helpIcon: {
+    marginLeft: 2,
+  },
   providerName: {
     fontSize: FontSizes.md,
     fontWeight: FontWeights.semibold,
     color: Colors.text,
-    marginBottom: 2,
   },
   providerDescription: {
+    fontSize: FontSizes.xs,
+    color: Colors.textSecondary,
+  },
+  thirdpartySelectedHint: {
+    marginTop: 4,
     fontSize: FontSizes.xs,
     color: Colors.textSecondary,
   },
@@ -1092,6 +1615,87 @@ const styles = StyleSheet.create({
     borderTopColor: Colors.divider,
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.sm,
+  },
+
+  thirdpartyEmptyText: {
+    fontSize: FontSizes.xs,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.sm,
+    lineHeight: 16,
+  },
+  thirdpartyAddButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.sm,
+    gap: Spacing.xs,
+    backgroundColor: Colors.backgroundSecondary,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  thirdpartyAddButtonInline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.sm,
+    gap: Spacing.xs,
+    marginTop: Spacing.sm,
+    backgroundColor: Colors.backgroundSecondary,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  thirdpartyAddButtonText: {
+    fontSize: FontSizes.sm,
+    color: Colors.primary,
+    fontWeight: FontWeights.medium,
+  },
+  thirdpartyList: {
+    gap: Spacing.xs,
+  },
+  thirdpartyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: Spacing.xs,
+    paddingHorizontal: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+  },
+  thirdpartyRowActive: {
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primaryLight,
+  },
+  thirdpartyRowLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    flex: 1,
+    marginRight: Spacing.sm,
+  },
+  thirdpartyRowText: {
+    flex: 1,
+  },
+  thirdpartyRowTitle: {
+    fontSize: FontSizes.sm,
+    color: Colors.text,
+    fontWeight: FontWeights.medium,
+  },
+  thirdpartyRowSubtitle: {
+    marginTop: 2,
+    fontSize: FontSizes.xs,
+    color: Colors.textSecondary,
+  },
+  thirdpartyRowActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+  },
+  thirdpartyEditor: {
+    marginTop: Spacing.md,
   },
   displaySection: {},
   keyDisplay: {
@@ -1132,12 +1736,21 @@ const styles = StyleSheet.create({
   // 编辑模式
   editSection: {},
   inputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
     backgroundColor: Colors.backgroundSecondary,
     borderRadius: BorderRadius.md,
     paddingHorizontal: Spacing.sm,
     marginBottom: Spacing.sm,
+  },
+  labelWithHelp: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  inputLabel: {
+    fontSize: FontSizes.xs,
+    color: Colors.textSecondary,
+    marginBottom: 4,
+    marginTop: Spacing.xs,
   },
   keyInput: {
     flex: 1,

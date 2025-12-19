@@ -22,6 +22,7 @@ import { toolPermissionStorage } from '../services/toolPermissionStorage';
 import { agentConfigStorage } from '../services/agentConfigStorage';
 import { userPreferenceMemory } from '../services/userPreferenceMemory';
 import { HumanMessage, AIMessage, BaseMessage } from '@langchain/core/messages';
+import { transcribeAudioWithGeminiOfficial, transcribeAudioWithGeminiViaNewAPI } from '../services/geminiAudioService';
 // import { buildMultimodalContent } from '../utils/multimodalUtils';
 
 // 定义 Context 类型
@@ -219,10 +220,13 @@ export const AgentProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           modelConfig: {
             executorProvider: executorConfig.provider,
             executorModel: executorConfig.model,
+            executorBaseURL: executorConfig.baseURL,
             intentRewriterProvider: intentConfig.provider,
             intentRewriterModel: intentConfig.model,
+            intentRewriterBaseURL: intentConfig.baseURL,
             reflectorProvider: reflectorConfigResult.provider,
             reflectorModel: reflectorConfigResult.model,
+            reflectorBaseURL: reflectorConfigResult.baseURL,
           }
         });
 
@@ -252,8 +256,10 @@ export const AgentProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     console.log('🎬 [AgentContext] ========== 开始新的对话轮次 ==========');
     console.log('📥 [AgentContext] 用户输入:', content);
 
-    // 使用毫秒时间戳作为序号（全局唯一，避免冲突）
-    const getNextSequence = () => Date.now();
+    // 使用单轮对话内的严格递增序号，避免同毫秒内的顺序错乱
+    const seqBase = Date.now() * 1000;
+    let seqInc = 0;
+    const getNextSequence = () => seqBase + (seqInc++);
 
     // 1. 添加用户消息
     const userMsgId = `user_${Date.now()}`;
@@ -286,9 +292,125 @@ export const AgentProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     console.log(`🤖 [AgentContext] 添加 AI 占位符:`, aiMsgId);
     setMessages(prev => [...prev, aiPlaceholder]);
 
-    // 3. 准备历史记录
-    const humanMsg = new HumanMessage(content); // 简化处理，暂不处理多模态构建细节，假设是文本
-    // TODO: 完整实现 buildMultimodalContent 逻辑
+    // 3. 准备历史记录 - 构建多模态消息
+    let humanMsg: HumanMessage;
+
+    // ===== 语音输入（NewAPI Gemini 原生格式） =====
+    // 参考 NewAPI 文档：GeminiRequest.parts[].inlineData { mimeType, data }
+    // - provider=gemini：调用官方 Gemini generateContent 转写
+    // - provider=thirdparty 且 model=gemini*：调用 {baseURL}/v1beta/models/{model}:generateContent 转写
+    // 目标：恢复“语音输入可用”，让 agent 拿到真实文本，而不是占位符。
+    let effectiveText = content;
+    const firstAudio = attachments.find((a) => a?.type === 'audio');
+    const isVoiceOnly = !content.trim() && !!firstAudio?.base64;
+
+    const inferAudioMimeType = (uri?: string, fallback?: string) => {
+      const fb = (fallback || '').trim();
+      if (fb) return fb;
+      const lower = (uri || '').toLowerCase();
+      if (lower.endsWith('.m4a') || lower.endsWith('.mp4')) return 'audio/mp4';
+      if (lower.endsWith('.aac')) return 'audio/aac';
+      if (lower.endsWith('.mp3')) return 'audio/mpeg';
+      if (lower.endsWith('.wav')) return 'audio/wav';
+      return 'audio/aac';
+    };
+
+    if (isVoiceOnly) {
+      try {
+        const executorConfig = await apiKeyStorage.getModelForRole('executor');
+        const model = (executorConfig?.model || currentModelName || '').trim();
+        const mimeType = inferAudioMimeType(firstAudio?.uri, firstAudio?.mimeType);
+
+        if (executorConfig?.provider === 'gemini' && executorConfig?.apiKey && model) {
+          const transcript = await transcribeAudioWithGeminiOfficial({
+            apiKey: executorConfig.apiKey,
+            model,
+            base64: firstAudio.base64,
+            mimeType,
+          });
+          effectiveText = transcript;
+          console.log('🎧 [AgentContext] Gemini audio transcribed (official):', effectiveText);
+        } else if (
+          executorConfig?.provider === 'thirdparty' &&
+          executorConfig?.apiKey &&
+          executorConfig?.baseURL &&
+          model &&
+          model.startsWith('gemini')
+        ) {
+          const transcript = await transcribeAudioWithGeminiViaNewAPI({
+            baseURL: executorConfig.baseURL,
+            apiKey: executorConfig.apiKey,
+            model,
+            base64: firstAudio.base64,
+            mimeType,
+          });
+          effectiveText = transcript;
+          console.log('🎧 [AgentContext] Gemini audio transcribed (NewAPI):', effectiveText);
+        }
+
+        // 可选：把转写文本回填到 UI 中，避免用户消息显示为空
+        if (effectiveText.trim()) {
+          setMessages(prev => prev.map(m => (m.id === userMsgId ? { ...m, content: effectiveText } : m)));
+        }
+      } catch (e) {
+        console.warn('⚠️ [AgentContext] Gemini audio transcription failed, fallback to placeholder:', e);
+      }
+    }
+    
+    if (attachments.length > 0) {
+      // 有附件：构建多模态消息（文本 + 图片）
+      // ⚠️ 注意：当前仅将“图片”注入到 LLM 的 message content。
+      // 音频/文件类附件不会注入（否则会触发不同 Provider 的不兼容）。
+      // 当只有非图片附件且文本为空时，必须降级为纯文本占位符，避免 OpenAI 兼容接口返回 400。
+      const messageContent: Array<{ type: string; text?: string; image_url?: { url: string } }> = [];
+
+      // 添加文本内容（如果有）
+      if (effectiveText.trim()) {
+        messageContent.push({
+          type: 'text',
+          text: effectiveText,
+        });
+      }
+
+      // 添加图片内容
+      attachments.forEach((attachment) => {
+        if (attachment.type === 'image' && attachment.base64) {
+          // LangChain 支持的格式：data:image/jpeg;base64,xxx
+          const imageUrl = attachment.base64.startsWith('data:')
+            ? attachment.base64
+            : `data:image/jpeg;base64,${attachment.base64}`;
+
+          messageContent.push({
+            type: 'image_url',
+            image_url: { url: imageUrl },
+          });
+
+          console.log('🖼️ [AgentContext] Added image to message, size:', attachment.size);
+        }
+      });
+
+      // 如果最终没有任何可发送给模型的 part，则降级为纯文本消息
+      if (messageContent.length === 0) {
+        const hasAudio = attachments.some((a) => a?.type === 'audio');
+        const hasOther = attachments.length > 0;
+        const fallbackText = effectiveText.trim()
+          ? effectiveText
+          : hasAudio
+            ? '（用户发送了一段语音消息）'
+            : hasOther
+              ? '（用户发送了一个附件）'
+              : '';
+
+        humanMsg = new HumanMessage(fallbackText);
+        console.log('🖼️ [AgentContext] Attachment-only message fallback to text:', fallbackText);
+      } else {
+        humanMsg = new HumanMessage({ content: messageContent });
+        console.log('🖼️ [AgentContext] Created multimodal message with', messageContent.length, 'parts');
+      }
+    } else {
+      // 无附件：纯文本消息
+      humanMsg = new HumanMessage(effectiveText);
+    }
     
     historyRef.current.push(humanMsg);
 
@@ -314,6 +436,18 @@ export const AgentProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         setLastReflection(result);
         const seq = getNextSequence();
         console.log(`💭 [AgentContext] Reflection [seq=${seq}]:`, result.thought.substring(0, 50));
+        
+        // 追加反思到思考消息
+        if (thinkingMsgId) {
+          const reflectionPreview = result.thought.length > 100 
+            ? result.thought.substring(0, 100) + '...'
+            : result.thought;
+          const reflectionInfo = `\n\n💭 反思: ${reflectionPreview}`;
+          setMessages(prev => prev.map(m => 
+            m.id === thinkingMsgId ? {...m, content: m.content + reflectionInfo} : m
+          ));
+        }
+        
         // 添加反思消息
         const reflectionMsg: AgentMessage = {
           id: `reflection_${Date.now()}`,
@@ -343,11 +477,22 @@ export const AgentProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                  sequence: seq,
                }]);
              }
-           } else if (thinkingMsgId) {
+           } else if (thinkingMsgId && step.content && step.content !== '正在思考...') {
+             // 更新思考内容（操作步骤，不是模型推理）
              console.log('🤔 [AgentContext] Thinking update:', step.content.substring(0, 50));
-             setMessages(prev => prev.map(m => m.id === thinkingMsgId ? {...m, content: step.content} : m));
+             setMessages(prev => prev.map(m => 
+               m.id === thinkingMsgId ? {...m, content: step.content} : m
+             ));
            }
            return;
+        }
+
+        // 将工具调用也追加到思考消息（展示执行流程）
+        if (step.type === 'tool_call' && thinkingMsgId) {
+          const toolInfo = `\n\n🔧 ${step.content || `调用工具: ${step.toolName}`}`;
+          setMessages(prev => prev.map(m => 
+            m.id === thinkingMsgId ? {...m, content: m.content + toolInfo} : m
+          ));
         }
 
         // 处理工具调用
@@ -380,6 +525,17 @@ export const AgentProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         if (step.type === 'tool_result' && step.toolName) {
           console.log(`✅ [AgentContext] Tool result:`, step.toolName);
           console.log(`   Result:`, step.content.substring(0, 100));
+          
+          // 追加工具结果到思考消息
+          if (thinkingMsgId) {
+            const resultPreview = step.content.length > 50 
+              ? step.content.substring(0, 50) + '...'
+              : step.content;
+            const resultInfo = `\n   ✓ 结果: ${resultPreview}`;
+            setMessages(prev => prev.map(m => 
+              m.id === thinkingMsgId ? {...m, content: m.content + resultInfo} : m
+            ));
+          }
           
           const tracked = toolCallTracker[step.toolName];
           const isRenderTool = step.toolName.startsWith('render_');
@@ -512,15 +668,40 @@ export const AgentProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           }];
         });
       }
-    } catch (error) {
-      console.error('❌ [AgentContext] Execution error:', error);
-      setMessages(prev => [...prev, {
-        id: `error_${Date.now()}`,
-        type: 'text',
-        sender: 'system',
-        content: `执行出错: ${error instanceof Error ? error.message : '未知错误'}`,
-        timestamp: new Date()
-      }]);
+    } catch (err) {
+      console.error('❌ [AgentContext] Execution error:', err);
+
+      // ⚠️ 注意：不要在 setState updater 闭包里直接引用 catch 变量（Hermes 下可能触发 ReferenceError）
+      const rawErrText = err instanceof Error ? err.message : String(err ?? '未知错误');
+      const rawStack = err instanceof Error ? err.stack : undefined;
+
+      // LangChain 在模型响应缺失（例如 choices 为空）时，可能会在 BaseChatModel.invoke 里触发该 TypeError。
+      // 这通常意味着：第三方网关对当前模型/参数（尤其是 tools/tool calling）不兼容，或返回结构并非 OpenAI 兼容格式。
+      const looksLikeEmptyGeneration =
+        rawErrText.includes("Cannot read property 'message' of undefined") ||
+        rawErrText.includes('Cannot read property \"message\" of undefined') ||
+        rawErrText.includes('Cannot read properties of undefined (reading \"message\")') ||
+        rawErrText.includes("Cannot read properties of undefined (reading 'message')");
+
+      const errText = looksLikeEmptyGeneration
+        ? '模型没有返回可用的生成结果（可能是第三方网关对该模型/工具调用不兼容或响应不符合 OpenAI 兼容格式）。\n\n建议：\n1) 把 Executor 模型换成已验证支持工具调用的 OpenAI 兼容模型（例如 gpt-4o-mini / deepseek-chat 等）；\n2) 或检查第三方网关是否开启了 tools/tool-calling 的 OpenAI 兼容支持。'
+        : rawErrText;
+
+      if (looksLikeEmptyGeneration) {
+        console.warn('⚠️ [AgentContext] Suspected empty generations/choices from model response. This is usually a gateway compatibility issue.');
+        if (rawStack) console.warn('⚠️ [AgentContext] Stack:', rawStack);
+      }
+
+      setMessages(prev => [
+        ...prev,
+        {
+          id: `error_${Date.now()}`,
+          type: 'text',
+          sender: 'system',
+          content: `执行出错: ${errText}`,
+          timestamp: new Date(),
+        },
+      ]);
     } finally {
       console.log('🏁 [AgentContext] Finalizing...');
       
@@ -536,6 +717,17 @@ export const AgentProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           if (m.id === aiMsgId && !m.content && !m.metadata?.toolCallData) return false;
           return true;
         });
+
+        // 1.1 将本轮“正在思考...”标记为完成（避免结束后仍显示“正在思考...”）
+        if (thinkingMsgId) {
+          filtered = filtered.map(m => {
+            if (m.id !== thinkingMsgId) return m;
+            if (m.content === '正在思考...') {
+              return { ...m, content: '思考完成' };
+            }
+            return m;
+          });
+        }
         
         // 2. 按序号排序（确保消息按照生成顺序显示）
         filtered.sort((a, b) => {
@@ -546,7 +738,6 @@ export const AgentProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         
         console.log('📊 [AgentContext] Final message count:', filtered.length);
         console.log('📊 [AgentContext] Message order:', filtered.map(m => `[${m.sequence}] ${m.type}`).join(' → '));
-        console.log('🔍 [AgentContext] Sequence details:', filtered.map(m => ({ id: m.id, seq: m.sequence, type: m.type, sender: m.sender })));
         console.log('🔍 [AgentContext] Sequence details:', filtered.map(m => ({ id: m.id, seq: m.sequence, type: m.type, sender: m.sender })));
         
         return filtered;
@@ -639,9 +830,19 @@ export const AgentProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   }, []);
 
   const confirmOperation = useCallback(() => {
-    agentRef.current?.confirm();
+    console.log('✅ [AgentContext] confirmOperation called');
+    console.log('  - agentRef.current:', !!agentRef.current);
+    console.log('  - pendingConfirmation:', !!pendingConfirmation);
+    
+    if (!agentRef.current) {
+      console.error('❌ [AgentContext] agentRef.current is null!');
+      return;
+    }
+    
+    agentRef.current.confirm();
     setPendingConfirmation(null);
-  }, []);
+    console.log('✅ [AgentContext] Agent confirmed, pendingConfirmation cleared');
+  }, [pendingConfirmation]);
 
   const rejectOperation = useCallback((reason?: string) => {
     agentRef.current?.reject(reason);

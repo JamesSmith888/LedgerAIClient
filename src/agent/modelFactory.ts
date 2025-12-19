@@ -263,15 +263,85 @@ async function fetchAlibabaBailianModels(apiKey: string): Promise<FetchModelsRes
 }
 
 /**
+ * 动态获取第三方网关支持的模型列表
+ * 
+ * 第三方网关通常使用 OpenAI 兼容 API
+ * 支持 /v1/models 接口
+ */
+async function fetchThirdPartyModels(apiKey: string, baseURL: string): Promise<FetchModelsResult> {
+    const cacheKey = `thirdparty-${baseURL}-${apiKey.slice(-8)}`;
+    const cached = modelListCache.get(cacheKey);
+
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+        console.log('📋 [ModelFactory] Using cached models for third-party gateway');
+        return { success: true, models: cached.models, cached: true };
+    }
+
+    try {
+        // 确保baseURL 格式正确
+        const normalizedURL = baseURL.replace(/\/$/, '');
+        const endpoint = normalizedURL.endsWith('/v1') 
+            ? `${normalizedURL}/models` 
+            : `${normalizedURL}/v1/models`;
+
+        console.log(`🔍 [ModelFactory] Fetching models from: ${endpoint}`);
+
+        const response = await fetch(endpoint, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json',
+            },
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+
+        if (!data.data || !Array.isArray(data.data)) {
+            throw new Error('Invalid response format');
+        }
+
+        const models: ModelInfo[] = data.data.map((model: any) => ({
+            id: model.id,
+            name: model.id,
+            description: model.description || undefined,
+            supportsVision: model.id.toLowerCase().includes('vision') || model.id.toLowerCase().includes('gemini'),
+            supportsTools: true,
+        }));
+
+        // 缓存结果
+        modelListCache.set(cacheKey, {
+            models,
+            timestamp: Date.now(),
+        });
+
+        console.log(`✅ [ModelFactory] Fetched ${models.length} models from third-party gateway`);
+        return { success: true, models };
+    } catch (error) {
+        console.error('❌ [ModelFactory] Failed to fetch third-party models:', error);
+        return {
+            success: false,
+            models: [],
+            error: error instanceof Error ? error.message : '获取模型列表失败',
+        };
+    }
+}
+
+/**
  * 动态获取指定提供商支持的模型列表
  * 
  * @param provider AI 提供商
  * @param apiKey API Key
+ * @param baseURL 自定义 Base URL（第三方网关必需）
  * @returns 模型列表或错误信息
  */
 export async function fetchAvailableModels(
     provider: AIProvider,
-    apiKey: string
+    apiKey: string,
+    baseURL?: string
 ): Promise<FetchModelsResult> {
     if (!apiKey || !apiKey.trim()) {
         return {
@@ -288,6 +358,15 @@ export async function fetchAvailableModels(
             return fetchDeepSeekModels(apiKey);
         case 'alibaba':
             return fetchAlibabaBailianModels(apiKey);
+        case 'thirdparty':
+            if (!baseURL || !baseURL.trim()) {
+                return {
+                    success: false,
+                    models: [],
+                    error: 'Base URL 不能为空',
+                };
+            }
+            return fetchThirdPartyModels(apiKey, baseURL);
         default:
             return {
                 success: false,
@@ -333,6 +412,8 @@ export interface ModelCreationConfig {
     maxRetries?: number;
     /** 可选：绑定的工具 */
     tools?: StructuredToolInterface[];
+    /** 自定义 Base URL（用于第三方网关） */
+    baseURL?: string;
 }
 
 /**
@@ -413,10 +494,43 @@ class AlibabaBailianModelStrategy implements ModelCreationStrategy {
     }
 }
 
+/**
+ * 第三方网关模型创建策略
+ * 支持任意兼容 Gemini/OpenAI API 的第三方中转服务
+ */
+class ThirdPartyGatewayModelStrategy implements ModelCreationStrategy {
+    private baseURL: string;
+
+    constructor(baseURL: string) {
+        // 确保 baseURL 以 /v1 或 /v1beta 结尾
+        this.baseURL = baseURL.replace(/\/$/, '');
+        if (!this.baseURL.endsWith('/v1') && !this.baseURL.endsWith('/v1beta')) {
+            this.baseURL += '/v1';
+        }
+    }
+
+    createModel(config: ModelCreationConfig): BaseChatModel {
+        // 第三方网关统一使用 OpenAI 兼容接口
+        // 注意：不能使用 ChatGoogleGenerativeAI，因为它无法自定义 endpoint，总是访问 Google 官方 API
+        return new ChatOpenAI({
+            model: config.model,
+            apiKey: config.apiKey,
+            temperature: config.temperature ?? 0,
+            maxRetries: config.maxRetries ?? 2,
+            configuration: { baseURL: this.baseURL },
+        });
+    }
+
+    getProviderConfig(): AIProviderConfig {
+        return AI_PROVIDERS.thirdparty;
+    }
+}
+
 // ============ 策略注册表 ============
 
 /**
  * 策略注册表 - 管理所有可用的模型创建策略
+ * 注意：第三方网关策略需要动态创建（因为需要 baseURL）
  */
 const strategyRegistry = new Map<AIProvider, ModelCreationStrategy>([
     ['gemini', new GeminiModelStrategy()],
@@ -452,14 +566,24 @@ export function getRegisteredProviders(): AIProvider[] {
 export function createChatModel(config: ModelCreationConfig): BaseChatModel {
     console.log(`创建模型的 config 信息:`, config);
 
-    const { provider, tools } = config;
+    const { provider, tools, baseURL } = config;
 
-    // 获取对应的策略
-    const strategy = strategyRegistry.get(provider);
+    // 第三方网关需要动态创建策略
+    let strategy: ModelCreationStrategy | undefined;
+    
+    if (provider === 'thirdparty') {
+        if (!baseURL || !baseURL.trim()) {
+            throw new Error('❌ [ModelFactory] Third-party gateway requires a valid baseURL');
+        }
+        strategy = new ThirdPartyGatewayModelStrategy(baseURL);
+    } else {
+        strategy = strategyRegistry.get(provider);
+    }
+
     if (!strategy) {
+        const availableProviders = Array.from(strategyRegistry.keys()).join(', ');
         throw new Error(
-            `Unsupported AI provider: ${provider}. ` +
-            `Available providers: ${Array.from(strategyRegistry.keys()).join(', ')}`
+            `❌ [ModelFactory] Unsupported provider: ${provider}. Available: ${availableProviders}, thirdparty`
         );
     }
 

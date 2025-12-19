@@ -13,6 +13,9 @@ import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import java.io.File
 import java.io.FileInputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * 音频录制原生模块
@@ -71,11 +74,13 @@ class AudioRecorderModule(private val reactContext: ReactApplicationContext) :
         }
 
         try {
-            // 设置输出文件路径
-            outputFile = "${reactContext.cacheDir}/voice_recording.m4a"
-            
-            // 删除旧文件
-            File(outputFile).delete()
+            // 设置输出文件路径（持久化 + 唯一命名，避免被后续录音覆盖，导致历史语音无法播放）
+            val dir = File(reactContext.filesDir, "voice_messages")
+            if (!dir.exists()) {
+                dir.mkdirs()
+            }
+            val ts = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
+            outputFile = File(dir, "voice_$ts.m4a").absolutePath
 
             // 创建 MediaRecorder
             mediaRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {

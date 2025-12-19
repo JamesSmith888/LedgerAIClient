@@ -108,12 +108,14 @@ const renderAttachments = (
 
       {/* 音频附件 */}
       {audioAttachments.map((attachment, index) => (
-        <View 
+        <Pressable
           key={attachment.id || `audio-${index}`} 
-          style={[
+          onPress={() => onPress?.(attachment)}
+          style={({ pressed }) => [
             styles.audioAttachment,
             isUser ? styles.userAudioAttachment : styles.assistantAudioAttachment,
-            imageAttachments.length > 0 && { marginTop: 8 }
+            imageAttachments.length > 0 && { marginTop: 8 },
+            pressed && { opacity: 0.75 },
           ]}
         >
           <View style={[styles.audioIconContainer, isUser ? styles.userAudioIcon : styles.assistantAudioIcon]}>
@@ -131,7 +133,7 @@ const renderAttachments = (
               点击播放
             </Text>
           </View>
-        </View>
+        </Pressable>
       ))}
     </View>
   );
