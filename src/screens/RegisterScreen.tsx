@@ -4,10 +4,9 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  KeyboardAvoidingView,
   Platform,
-  ScrollView,
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { toast } from '../utils/toast';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Input } from '../components/common/Input';
@@ -191,18 +190,16 @@ const handleAlipayRegister = async () => {
 };
 
 return (
-  <KeyboardAvoidingView
+  <KeyboardAwareScrollView
     style={styles.container}
-    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    contentContainerStyle={[
+      styles.scrollContent,
+      { paddingTop: insets.top + Spacing.xl },
+    ]}
+    keyboardShouldPersistTaps="handled"
+    bottomOffset={20}
   >
-    <ScrollView
-      contentContainerStyle={[
-        styles.scrollContent,
-        { paddingTop: insets.top + Spacing.xl },
-      ]}
-      keyboardShouldPersistTaps="handled"
-    >
-      {/* Logo区域 */}
+    {/* Logo区域 */}
       <View style={styles.logoContainer}>
         <Text style={styles.logoEmoji}>✨</Text>
         <Text style={styles.title}>创建账号</Text>
@@ -281,9 +278,8 @@ return (
           <Text style={styles.linkText}>立即登录</Text>
         </TouchableOpacity>
       </View>
-    </ScrollView>
-  </KeyboardAvoidingView>
-);
+    </KeyboardAwareScrollView>
+  );
 };
 
 const styles = StyleSheet.create({

@@ -202,6 +202,9 @@ export const AgentProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         setCurrentProvider(executorConfig.provider);
         setCurrentModelName(executorConfig.model);
 
+        // 调试：打印 agentConfig
+        console.log('🔧 [AgentContext] Agent config loaded:', JSON.stringify(agentConfig, null, 2));
+
         // 2. 获取工具权限
         const alwaysAllowedTools = await toolPermissionStorage.getAllAlwaysAllowed();
         
@@ -214,6 +217,9 @@ export const AgentProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           enableIntentRewriting: true, // 默认启用
           enableConfirmation: true, // 默认启用
           enableReflection: agentConfig.enableReflection,
+          reflectorConfig: {
+            frequency: agentConfig.reflectionFrequency || 'every_step',
+          },
           userPreferences: {
             confirmHighRisk: agentConfig.confirmationPolicy?.confirmHighRisk ?? true,
           },
@@ -637,11 +643,21 @@ export const AgentProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         chunkCount++;
         if (chunk.messages && chunk.messages.length > 0) {
           const lastMsg = chunk.messages[chunk.messages.length - 1];
-          if (lastMsg instanceof AIMessage && typeof lastMsg.content === 'string') {
-            finalContent = lastMsg.content;
-            // ⚠️ 关键修复：不在这里实时更新消息，避免打乱顺序
-            // 等所有步骤完成后，在 finally 块中统一添加最终的 AI 响应
-            console.log(`📝 [AgentContext] Chunk ${chunkCount}: content length=${finalContent.length}`);
+          if (lastMsg instanceof AIMessage) {
+            const hasToolCalls = (lastMsg as any).tool_calls && (lastMsg as any).tool_calls.length > 0;
+            if (typeof lastMsg.content === 'string' && !hasToolCalls) {
+              finalContent = lastMsg.content;
+              // ⚠️ 关键修复：不在这里实时更新消息，避免打乱顺序
+              // 等所有步骤完成后，在 finally 块中统一添加最终的 AI 响应
+              console.log(`📝 [AgentContext] Chunk ${chunkCount}: content length=${finalContent.length}`);
+            } else {
+              // 如果是工具调用消息，或者是空消息，不应作为最终回复
+              // 此时应该清空 finalContent，防止之前的中间消息被错误地保留为最终回复
+              finalContent = "";
+            }
+          } else {
+            // 如果最后一条不是 AI 消息（例如是 ToolMessage），说明 AI 还没说完或正在等待
+            finalContent = "";
           }
           historyRef.current = chunk.messages;
         }

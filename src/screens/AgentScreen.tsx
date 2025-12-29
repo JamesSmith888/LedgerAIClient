@@ -132,7 +132,8 @@ export const AgentScreen: React.FC = () => {
           }),
           agentConfigStorage.getConfig().catch(err => {
             console.warn('⚠️ [AgentScreen] Failed to load agent config:', err);
-            return {};
+            // 返回默认配置，而不是空对象，确保默认值生效
+            return { reflectionFrequency: 'every_step' as const, enableReflection: true };
           }),
         ]);
         
@@ -269,7 +270,7 @@ export const AgentScreen: React.FC = () => {
     enableConfirmation: true, // 启用危险操作确认
     enableReflection: agentConfig.enableReflection ?? true, // 从配置读取，默认开启（ReAct 核心特性）
     reflectorConfig: {
-      frequency: agentConfig.reflectionFrequency ?? 'on_error', // 从配置读取，默认出错时反思
+      frequency: agentConfig.reflectionFrequency ?? 'every_step', // 从配置读取，默认每步反思（与默认预设一致）
       showThoughts: true, // 展示反思过程
       confidenceThresholds: agentConfig.reflectorConfidenceThresholds, // 从配置读取
     },

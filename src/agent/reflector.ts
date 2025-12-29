@@ -222,8 +222,10 @@ ${renderToolNames || '（无渲染工具）'}
 ## 关键规则
 
 - **渲染是必须的**: 任务完成前必须调用渲染工具展示结果
+- **渲染后即完成**: 如果当前步骤是渲染工具调用且成功，同时之前已有业务操作（如创建/查询/修改/删除）成功，那么任务已完成。设置 nextAction=complete, isTaskComplete=true, progressPercent=100
 - **数据传递**: 调用渲染工具时，必须从上一步的工具结果中提取完整数据传入（不要传空数组或空对象）
 - **检查空结果**: 如果查询类工具返回空结果（count: 0 或 empty list），且后续操作依赖该结果，应指示执行模型停止尝试后续操作，并告知用户未找到。
+- **严禁假定成功**: 如果工具调用返回错误（包括"重复调用"、"参数错误"等），**必须**视为步骤失败 (stepSuccess=false)。绝对不能假设任务已在之前的步骤中完成。
 - nextAction=complete: 仅当业务操作成功 **且** 已调用渲染工具
 - 如果业务成功但未渲染: nextAction=continue, progressPercent=80
 - correctionHint: adjust_strategy 时必须具体可执行，包含数据提取说明
@@ -308,7 +310,18 @@ export class Reflector {
    * 检查是否应该进行反思
    */
   shouldReflect(observation: StepObservation, remainingSteps: number): boolean {
+    console.log(`🔍 [Reflector] shouldReflect check:`, {
+      enabled: this.config.enabled,
+      hasModel: !!this.model,
+      frequency: this.config.frequency,
+      toolName: observation.toolName,
+      success: observation.success,
+      reflectionCount: this.reflectionCount,
+      maxReflections: this.maxReflections,
+    });
+
     if (!this.config.enabled || !this.model) {
+      console.log(`🔍 [Reflector] Skipping reflection: enabled=${this.config.enabled}, hasModel=${!!this.model}`);
       return false;
     }
 
@@ -318,22 +331,36 @@ export class Reflector {
       return false;
     }
 
+    // 特殊情况：渲染工具成功执行后，无论频率设置如何，都应该反思
+    // 因为渲染通常意味着任务可能已完成，需要反思模型来判断
+    if (observation.success && observation.toolName?.startsWith('render_')) {
+      console.log('🔍 [Reflector] Render tool completed, triggering reflection to check task completion');
+      return true;
+    }
+
+    let shouldReflect = false;
     switch (this.config.frequency) {
       case 'every_step':
-        return true;
+        shouldReflect = true;
+        break;
       
       case 'on_error':
-        return !observation.success;
+        shouldReflect = !observation.success;
+        break;
       
       case 'on_milestone':
         // 里程碑：第一步、最后一步、或每3步
-        return remainingSteps === 0 || 
+        shouldReflect = remainingSteps === 0 || 
                observation.stepId.endsWith('_0') || 
                this.reflectionCount % 3 === 0;
+        break;
       
       default:
-        return false;
+        shouldReflect = false;
     }
+    
+    console.log(`🔍 [Reflector] Decision: shouldReflect=${shouldReflect} (frequency=${this.config.frequency})`);
+    return shouldReflect;
   }
 
   /**

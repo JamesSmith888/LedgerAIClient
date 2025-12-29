@@ -327,6 +327,14 @@ const defaultPermissions: ToolPermission[] = [
     requiresExplicitConfirmation: true,
     maxCallsPerMinute: 5,
   },
+  // batch intentType 映射（意图解析结果）
+  {
+    toolName: 'batch',
+    riskLevel: 'medium',
+    operationType: 'write',
+    description: '批量记账操作',
+    requiresExplicitConfirmation: true,
+  },
   {
     toolName: 'batch_create_transactions',
     riskLevel: 'high',

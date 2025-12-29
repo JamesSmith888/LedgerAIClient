@@ -1,13 +1,12 @@
 import React, { useState } from 'react';
 import {
-  KeyboardAvoidingView,
   Platform,
-  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { toast } from '../utils/toast';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Input } from '../components/common/Input';
@@ -169,18 +168,16 @@ export const LoginScreen: React.FC<{ navigation: any }> = ({ navigation }) => {
   };
 
   return (
-    <KeyboardAvoidingView
+    <KeyboardAwareScrollView
       style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      contentContainerStyle={[
+        styles.scrollContent,
+        { paddingTop: insets.top + Spacing.xl },
+      ]}
+      keyboardShouldPersistTaps="handled"
+      bottomOffset={20}
     >
-      <ScrollView
-        contentContainerStyle={[
-          styles.scrollContent,
-          { paddingTop: insets.top + Spacing.xl },
-        ]}
-        keyboardShouldPersistTaps="handled"
-      >
-        {/* Logo区域 */}
+      {/* Logo区域 */}
         <View style={styles.logoContainer}>
           <Text style={styles.logoEmoji}>💰</Text>
           <Text style={styles.title}>LedgerAI</Text>
@@ -234,8 +231,7 @@ export const LoginScreen: React.FC<{ navigation: any }> = ({ navigation }) => {
             <Text style={styles.linkText}>立即注册</Text>
           </TouchableOpacity>
         </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+    </KeyboardAwareScrollView>
   );
 };
 

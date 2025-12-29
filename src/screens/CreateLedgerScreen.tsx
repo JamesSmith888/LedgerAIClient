@@ -3,9 +3,7 @@
  */
 import React, { useState } from 'react';
 import {
-  KeyboardAvoidingView,
   Platform,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -13,6 +11,7 @@ import {
   View,
   Switch,
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { toast, showConfirm } from '../utils/toast';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -97,10 +96,7 @@ export const CreateLedgerScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
-      <KeyboardAvoidingView
-        style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
+      <View style={styles.container}>
         {/* 头部 */}
         <View style={styles.header}>
           <TouchableOpacity
@@ -115,10 +111,11 @@ export const CreateLedgerScreen: React.FC = () => {
           <View style={styles.headerRight} />
         </View>
 
-        <ScrollView
+        <KeyboardAwareScrollView
           style={styles.scrollView}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
+          bottomOffset={20}
         >
           {/* 账本类型提示 */}
           <Card style={styles.typeCard}>
@@ -217,7 +214,7 @@ export const CreateLedgerScreen: React.FC = () => {
 
           {/* 底部占位 */}
           <View style={{ height: 100 }} />
-        </ScrollView>
+        </KeyboardAwareScrollView>
 
         {/* 底部按钮 */}
         <View style={styles.bottomBar}>
@@ -232,7 +229,7 @@ export const CreateLedgerScreen: React.FC = () => {
             </Text>
           </TouchableOpacity>
         </View>
-      </KeyboardAvoidingView>
+      </View>
     </SafeAreaView>
   );
 };

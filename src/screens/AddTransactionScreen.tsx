@@ -15,6 +15,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { useFocusEffect, useNavigation, CommonActions } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -714,16 +715,12 @@ export const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({ rout
         </View>
 
         {/* ========== 区域2: 详情列表（可滚动） ========== */}
-        <KeyboardAvoidingView
-          style={styles.keyboardAvoidingView}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
-        >
-        <ScrollView 
+        <KeyboardAwareScrollView
           style={styles.scrollView}
           contentContainerStyle={styles.contentContainer}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
+          bottomOffset={20}
         >
         {/* ========== 详情列表 ========== */}
         <View style={styles.detailsSection}>
@@ -889,8 +886,7 @@ export const AddTransactionScreen: React.FC<AddTransactionScreenProps> = ({ rout
             />
           </CollapsibleSection>
         </View>
-      </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardAwareScrollView>
 
       {/* ========== 底部固定区域：数字键盘 + 保存按钮 ========== */}
       <View

@@ -20,6 +20,7 @@ import {
   Keyboard,
   RefreshControl,
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Colors, Spacing, FontSizes, BorderRadius, Shadows, FontWeights } from '../constants/theme';
@@ -460,8 +461,7 @@ export const CategoryManagementScreen: React.FC = () => {
           setShowEditModal(false);
         }}
       >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        <View
           style={[styles.fullScreenContainer, { paddingTop: insets.top }]}
         >
           {/* 页面头部 */}
@@ -479,10 +479,11 @@ export const CategoryManagementScreen: React.FC = () => {
           </View>
 
           {/* 表单内容 */}
-          <ScrollView
+          <KeyboardAwareScrollView
             style={styles.editScrollView}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.editScrollViewContent}
+            bottomOffset={20}
           >
             {/* 分类名称 */}
             <View style={styles.formGroup}>
@@ -636,7 +637,7 @@ export const CategoryManagementScreen: React.FC = () => {
                 maxLength={200}
               />
             </View>
-          </ScrollView>
+          </KeyboardAwareScrollView>
 
           {/* 底部按钮 */}
           <View style={[styles.editFooter, { paddingBottom: insets.bottom + Spacing.md }]}>
@@ -660,7 +661,7 @@ export const CategoryManagementScreen: React.FC = () => {
               )}
             </TouchableOpacity>
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </Modal>
     </View>
   );

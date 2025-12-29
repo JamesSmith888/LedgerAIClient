@@ -185,7 +185,18 @@ function buildSystemPrompt(context?: AgentRuntimeContext, _tools?: any[]): strin
 8. **💡 智能建议（重要）**：在调用渲染工具时，**必须**通过 suggestedActions 参数提供 2-4 个后续操作建议
    - ❌ 错误：在消息文本中写"智能建议：1. xxx 2. xxx"
    - ✅ 正确：在渲染工具的 suggestedActions 参数中传入数组：[{label: "xxx", message: "xxx"}, ...]
-   - 建议应该具体、可操作，帮助用户快速完成相关任务`;
+   - 建议应该具体、可操作，帮助用户快速完成相关任务
+
+## 复杂查询与修改处理原则
+
+当用户要求修改或删除特定记录时，请遵循 **"检索-确认-执行"** 流程：
+
+1. **先宽泛检索**：优先使用时间范围（如“昨天”、“本周”）作为主要过滤条件，获取候选列表。不要过分依赖关键词模糊搜索，因为用户的自然语言描述可能与记录文本不完全一致（例如用户说“咖啡”，记录可能是“星巴克”）。
+2. **自行推理匹配**：阅读检索返回的交易列表，利用你的常识判断哪一条符合用户的自然语言描述。
+3. **处理歧义**：
+   - 如果找到唯一的最佳匹配：直接继续执行修改/删除操作。
+   - 如果找到多个可能的匹配：**必须**停止执行，调用渲染工具展示这些选项，并询问用户是哪一条。
+   - 如果没有匹配：告知用户未找到。`;
 
   // 如果没有上下文，直接返回基础提示词
   if (!context) {
@@ -322,7 +333,7 @@ export function createStatefulAgent(apiKey: string, options?: StatefulAgentOptio
 
   // 创建反思器（ReAct 模式核心组件）
   // 传入工具列表，使反思器能够感知可用工具
-  const reflector = createReflector({
+  const finalReflectorConfig = {
     ...DEFAULT_REFLECTOR_CONFIG,
     enabled: enableReflection,
     ...reflectorConfig,
@@ -331,7 +342,14 @@ export function createStatefulAgent(apiKey: string, options?: StatefulAgentOptio
     provider: reflectorProvider,  // 使用配置的提供商
     baseURL: reflectorBaseURL,  // 传递自定义 Base URL
     confidenceThresholds: userPreferences?.reflectorConfidenceThresholds,  // 传入置信度阈值配置
-  });
+  };
+  
+  console.log('🔧 [StatefulAgent] Reflector Configuration:');
+  console.log(`  - Enabled: ${finalReflectorConfig.enabled}`);
+  console.log(`  - Frequency: ${finalReflectorConfig.frequency}`);
+  console.log(`  - From reflectorConfig: ${JSON.stringify(reflectorConfig)}`);
+  
+  const reflector = createReflector(finalReflectorConfig);
   
   // 初始化反思器
   if (enableReflection) {
@@ -954,6 +972,39 @@ export function createStatefulAgent(apiKey: string, options?: StatefulAgentOptio
         token.throwIfCancelled();
         iterations++;
         
+        // ============ 调试：打印当前消息历史摘要 ============
+        console.log(`📨 [StatefulAgent] ========== ITERATION ${iterations} MESSAGE HISTORY ==========`);
+        console.log(`📨 [StatefulAgent] Total messages: ${currentMessages.length}`);
+        currentMessages.forEach((msg, idx) => {
+          const msgType = msg instanceof SystemMessage ? 'System' 
+            : msg instanceof HumanMessage ? 'Human'
+            : msg instanceof AIMessage ? 'AI'
+            : msg instanceof ToolMessage ? 'Tool'
+            : 'Unknown';
+          
+          let preview = '';
+          if (msgType === 'AI') {
+            const aiMsg = msg as AIMessage;
+            const hasTools = aiMsg.tool_calls && aiMsg.tool_calls.length > 0;
+            preview = hasTools 
+              ? `[${aiMsg.tool_calls!.map(tc => tc.name).join(', ')}]`
+              : (typeof aiMsg.content === 'string' ? aiMsg.content.substring(0, 50) : '[complex]');
+          } else if (msgType === 'Tool') {
+            const toolMsg = msg as ToolMessage;
+            preview = `id=${toolMsg.tool_call_id}, result=${String(toolMsg.content).substring(0, 30)}...`;
+          } else if (msgType === 'Human') {
+            preview = typeof msg.content === 'string' 
+              ? msg.content.substring(0, 50) 
+              : '[multimodal]';
+          } else {
+            preview = typeof msg.content === 'string' 
+              ? msg.content.substring(0, 50) 
+              : '[complex]';
+          }
+          console.log(`  [${idx}] ${msgType}: ${preview}`);
+        });
+        console.log(`📨 [StatefulAgent] ========== END MESSAGE HISTORY ==========`);
+        
         logger.stepProgress({ iteration: iterations, maxIterations, status: 'starting' });
         callbacks?.onStep?.({ type: 'thinking', content: '正在思考...' });
 
@@ -1432,10 +1483,11 @@ export function createStatefulAgent(apiKey: string, options?: StatefulAgentOptio
               error: `[系统错误] 禁止重复调用！你刚才已经用完全相同的参数调用过工具 "${toolCall.name}" 了。
 参数: ${JSON.stringify(toolCall.args)}
 
+**注意**：之前的调用可能已经失败了，或者你正在重复无效的操作。
 **严重警告**：你正在陷入死循环！
 1. **立即停止**尝试这个操作
-2. 如果是查询失败，请直接询问用户补充信息
-3. 不要重试相同的参数！`
+2. 检查上一次调用的结果，如果是失败的，请修改参数后再试
+3. 不要重试完全相同的参数！`
             };
           } else {
             result = await executeToolWithPermissionCheck(toolCall, callbacks);

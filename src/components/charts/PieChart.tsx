@@ -3,7 +3,7 @@
  * 用于展示分类占比
  */
 import React from 'react';
-import { View, Text, StyleSheet, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, Dimensions, TouchableOpacity } from 'react-native';
 import { PieChart } from 'react-native-chart-kit';
 import { Colors, Spacing, FontSizes, FontWeights } from '../../constants/theme';
 import { CategoryIcon } from '../common/CategoryIcon';
@@ -14,6 +14,7 @@ interface CustomPieChartProps {
     data: StatisticsItem[];
     width?: number;
     height?: number;
+    onItemPress?: (item: StatisticsItem) => void;
 }
 
 // 配色方案（参考 Google Material Design）
@@ -34,6 +35,7 @@ export const CustomPieChart: React.FC<CustomPieChartProps> = ({
     data,
     width = Dimensions.get('window').width - Spacing.lg * 2 - Spacing.lg * 2,
     height = 220,
+    onItemPress,
 }) => {
     // 转换数据格式（react-native-chart-kit 要求的格式）
     const chartData = data.slice(0, 8).map((item, index) => ({
@@ -70,7 +72,12 @@ export const CustomPieChart: React.FC<CustomPieChartProps> = ({
             {/* 图例列表（详细信息） */}
             <View style={styles.legend}>
                 {data.slice(0, 8).map((item, index) => (
-                    <View key={item.key} style={styles.legendItem}>
+                    <TouchableOpacity
+                        key={item.key}
+                        style={styles.legendItem}
+                        onPress={() => onItemPress && onItemPress(item)}
+                        activeOpacity={0.7}
+                    >
                         <View
                             style={[
                                 styles.legendColor,
@@ -89,7 +96,7 @@ export const CustomPieChart: React.FC<CustomPieChartProps> = ({
                         <Text style={styles.legendPercentage}>
                             {item.percentage.toFixed(1)}%
                         </Text>
-                    </View>
+                    </TouchableOpacity>
                 ))}
                 {data.length > 8 && (
                     <Text style={styles.moreText}>

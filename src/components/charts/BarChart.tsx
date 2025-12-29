@@ -3,7 +3,7 @@
  * 用于展示对比数据
  */
 import React from 'react';
-import { View, Text, StyleSheet, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, Dimensions, TouchableOpacity } from 'react-native';
 import { BarChart } from 'react-native-chart-kit';
 import { Colors, Spacing, FontSizes, FontWeights } from '../../constants/theme';
 import { CategoryIcon } from '../common/CategoryIcon';
@@ -15,6 +15,7 @@ interface CustomBarChartProps {
     width?: number;
     height?: number;
     showValues?: boolean;
+    onItemPress?: (item: StatisticsItem) => void;
 }
 
 export const CustomBarChart: React.FC<CustomBarChartProps> = ({
@@ -22,6 +23,7 @@ export const CustomBarChart: React.FC<CustomBarChartProps> = ({
     width = Dimensions.get('window').width - Spacing.lg * 2 - Spacing.lg * 2,
     height = 220,
     showValues = false,
+    onItemPress,
 }) => {
     // 只显示前8个数据（避免拥挤）
     const displayData = data.slice(0, 8);
@@ -81,7 +83,12 @@ export const CustomBarChart: React.FC<CustomBarChartProps> = ({
             {/* 图例列表 - 显示完整的分类名称和图标 */}
             <View style={styles.legend}>
                 {displayData.map((item, index) => (
-                    <View key={item.key} style={styles.legendItem}>
+                    <TouchableOpacity
+                        key={item.key}
+                        style={styles.legendItem}
+                        onPress={() => onItemPress && onItemPress(item)}
+                        activeOpacity={0.7}
+                    >
                         <View style={styles.legendIconWrapper}>
                             {item.icon && <CategoryIcon icon={item.icon} size={16} color={Colors.primary} />}
                         </View>
@@ -94,7 +101,7 @@ export const CustomBarChart: React.FC<CustomBarChartProps> = ({
                         <Text style={styles.legendPercentage}>
                             {item.percentage.toFixed(1)}%
                         </Text>
-                    </View>
+                    </TouchableOpacity>
                 ))}
                 {data.length > 8 && (
                     <Text style={styles.moreText}>

@@ -86,7 +86,7 @@ export const transactionDomainTool = new DynamicStructuredTool({
       categoryId: z.number().optional().describe("分类ID（精确匹配，优先使用）"),
       categoryName: z.string().optional().describe("分类名称（模糊匹配，当不确定分类ID时使用）"),
       type: z.enum(["INCOME", "EXPENSE"]).optional().describe("类型：INCOME=收入，EXPENSE=支出"),
-      keyword: z.string().optional().describe("搜索关键词（匹配交易描述）"),
+      keyword: z.string().optional().describe("搜索关键词（精确匹配交易描述，慎用！如果不确定描述完全一致，请不要使用此字段，而是先按时间范围查询）"),
       limit: z.number().optional().describe("返回数量限制"),
     }).optional().describe("查询/统计过滤条件"),
     // 单条操作参数
@@ -94,9 +94,9 @@ export const transactionDomainTool = new DynamicStructuredTool({
     // 创建/更新参数
     data: z.object({
       description: z.string().optional().describe("交易描述，记录消费用途或收入来源"),
-      amount: z.number().describe("金额（create时必填）"),
-      type: z.enum(["INCOME", "EXPENSE"]).describe("类型：EXPENSE=支出，INCOME=收入（create时必填）"),
-      categoryId: z.number().describe("分类ID，从上下文分类列表中选择（create时必填）"),
+      amount: z.number().optional().describe("金额（create时必填）"),
+      type: z.enum(["INCOME", "EXPENSE"]).optional().describe("类型：EXPENSE=支出，INCOME=收入（create时必填）"),
+      categoryId: z.number().optional().describe("分类ID，从上下文分类列表中选择（create时必填）"),
       paymentMethodId: z.number().optional().describe("支付方式ID"),
       transactionDateTime: z.string().optional().describe("交易时间 ISO格式，默认当前时间"),
     }).optional().describe("交易数据（create/update时使用，create时 amount、type、categoryId 必填）"),

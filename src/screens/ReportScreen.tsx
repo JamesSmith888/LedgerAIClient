@@ -12,6 +12,8 @@ import {
     RefreshControl,
     Modal,
     Dimensions,
+    TouchableOpacity,
+    ActivityIndicator,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -23,9 +25,10 @@ import { useLedger } from '../context/LedgerContext';
 import { useAuth } from '../context/AuthContext';
 import { LedgerSelector } from '../components/ledger/LedgerSelector';
 import { LedgerMembers } from '../components/ledger/LedgerMembers';
+import { CategoryIcon } from '../components/common/CategoryIcon';
 import { reportAPI } from '../api/services/reportAPI';
 import { transactionAPI } from '../api/services/transactionAPI';
-import type { CategoryStatistics, TrendStatistics, TimeGranularity, TrendDataPoint } from '../types/report';
+import type { CategoryStatistics, TrendStatistics, TimeGranularity, TrendDataPoint, StatisticsItem } from '../types/report';
 import type { Transaction } from '../types/transaction';
 import { Ledger, LedgerType } from '../types/ledger';
 import { toast } from '../utils/toast';
@@ -87,7 +90,7 @@ export const ReportScreen: React.FC = () => {
     const [selectedTimePreset, setSelectedTimePreset] = useState<TimeRangePreset>('month');
     
     // 多维度分析
-    const [dimensionType, setDimensionType] = useState<DimensionType>('category');
+    const [dimensionType, setDimensionType] = useState<DimensionType>('paymentMethod');
     const [dimensionData, setDimensionData] = useState<CategoryStatistics | null>(null);
     
     // 数据状态
@@ -115,6 +118,11 @@ export const ReportScreen: React.FC = () => {
 
     // 选中的数据点（用于展示详情）
     const [selectedPoint, setSelectedPoint] = useState<TrendDataPoint | null>(null);
+
+    // ========== ✨ 新增：分类详情弹窗状态 ==========
+    const [selectedCategoryItem, setSelectedCategoryItem] = useState<StatisticsItem | null>(null);
+    const [categoryTransactions, setCategoryTransactions] = useState<Transaction[]>([]);
+    const [loadingCategoryTransactions, setLoadingCategoryTransactions] = useState(false);
 
     // 加载选中点的Top交易
     useEffect(() => {
@@ -169,6 +177,8 @@ export const ReportScreen: React.FC = () => {
         fetchTopTransactions();
     }, [selectedPoint, filterLedger]);
 
+
+
     // 时间范围（默认当月）
     const [timeRange, setTimeRange] = useState<{ startTime: Date; endTime: Date }>(() => {
         const now = new Date();
@@ -176,6 +186,40 @@ export const ReportScreen: React.FC = () => {
         const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
         return { startTime: startOfMonth, endTime: endOfMonth };
     });
+
+    // ========== ✨ 新增：加载分类详情交易 ==========
+    useEffect(() => {
+        if (!selectedCategoryItem) return;
+
+        const loadCategoryTransactions = async () => {
+            setLoadingCategoryTransactions(true);
+            try {
+                // 使用 query 接口查询该分类下的交易
+                const response = await transactionAPI.query({
+                    ledgerId: filterLedger?.id || null,
+                    categoryId: Number(selectedCategoryItem.key),
+                    startTime: timeRange.startTime.toISOString(),
+                    endTime: timeRange.endTime.toISOString(),
+                    page: 0,
+                    size: 500, // 显示前500条，确保显示大部分数据
+                    sortBy: 'transactionDateTime',
+                    sortDirection: 'DESC'
+                });
+                setCategoryTransactions(response.content);
+            } catch (error) {
+                console.error('加载分类交易失败:', error);
+                toast.error('加载详情失败');
+            } finally {
+                setLoadingCategoryTransactions(false);
+            }
+        };
+
+        loadCategoryTransactions();
+    }, [selectedCategoryItem, timeRange, filterLedger]);
+
+    const handleCategoryPress = (item: StatisticsItem) => {
+        setSelectedCategoryItem(item);
+    };
 
     // ========== 数据加载 ==========
     useFocusEffect(
@@ -452,7 +496,7 @@ export const ReportScreen: React.FC = () => {
             <View style={styles.compactSelectorRow}>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.compactSelectorScroll}>
                     {([
-                        { type: 'category', label: '分类' },
+                        // { type: 'category', label: '分类' }, // 已有独立Tab，此处移除
                         { type: 'paymentMethod', label: '支付' },
                         { type: 'ledger', label: '账本' },
                     ] as const).map(({ type, label }) => (
@@ -493,9 +537,15 @@ export const ReportScreen: React.FC = () => {
                 headerRight={renderChartTypeToggle()}
             >
                 {chartType === 'pie' ? (
-                    <CustomPieChart data={categoryData.items} />
+                    <CustomPieChart 
+                        data={categoryData.items} 
+                        onItemPress={handleCategoryPress}
+                    />
                 ) : chartType === 'bar' ? (
-                    <CustomBarChart data={categoryData.items} />
+                    <CustomBarChart 
+                        data={categoryData.items} 
+                        onItemPress={handleCategoryPress}
+                    />
                 ) : (
                     <CategoryLineChart data={categoryData.items} />
                 )}
@@ -670,12 +720,12 @@ export const ReportScreen: React.FC = () => {
                     </View>
                 </Modal>
 
-                {/* 分类统计概览 (仅在趋势Tab显示) */}
-                {categoryData && (
+                {/* 分类统计概览 (仅在趋势Tab显示) - 已移除，避免重复 */}
+                {/* {categoryData && (
                     <View style={{ marginTop: Spacing.md }}>
                         {renderCategoryStatistics()}
                     </View>
-                )}
+                )} */}
 
                 {/* 数据表格 */}
                 {!isEmpty && (
@@ -757,6 +807,76 @@ export const ReportScreen: React.FC = () => {
         </View>
     );
 
+    const renderCategoryDetailModal = () => {
+        return (
+            <Modal
+                visible={!!selectedCategoryItem}
+                transparent={true}
+                animationType="slide"
+                onRequestClose={() => setSelectedCategoryItem(null)}
+            >
+                <Pressable 
+                    style={styles.modalOverlay} 
+                    onPress={() => setSelectedCategoryItem(null)}
+                >
+                    <Pressable 
+                        style={styles.detailSheet}
+                        onPress={(e) => e.stopPropagation()}
+                    >
+                        <View style={styles.sheetHandle} />
+                        <View style={styles.sheetHeader}>
+                            <View style={{flexDirection: 'row', alignItems: 'center'}}>
+                                {selectedCategoryItem?.icon && (
+                                    <CategoryIcon icon={selectedCategoryItem.icon} size={24} color={Colors.primary} style={{marginRight: 8}} />
+                                )}
+                                <Text style={styles.sheetTitle}>{selectedCategoryItem?.label} 详情</Text>
+                            </View>
+                            <TouchableOpacity
+                                style={styles.sheetCloseButton}
+                                onPress={() => setSelectedCategoryItem(null)}
+                            >
+                                <Text style={styles.sheetCloseButtonText}>✕</Text>
+                            </TouchableOpacity>
+                        </View>
+                        
+                        <View style={{paddingHorizontal: Spacing.lg, paddingBottom: Spacing.md}}>
+                            <Text style={{fontSize: FontSizes.sm, color: Colors.textSecondary}}>
+                                {timeRange.startTime.toLocaleDateString()} - {timeRange.endTime.toLocaleDateString()}
+                            </Text>
+                            <Text style={{fontSize: FontSizes.xxl, fontWeight: FontWeights.bold, marginTop: Spacing.xs}}>
+                                {formatCurrency(selectedCategoryItem?.amount || 0)}
+                            </Text>
+                        </View>
+
+                        <ScrollView style={styles.detailContent}>
+                            {loadingCategoryTransactions ? (
+                                <ActivityIndicator size="large" color={Colors.primary} style={{marginTop: 20}} />
+                            ) : categoryTransactions.length === 0 ? (
+                                <Text style={{textAlign: 'center', color: Colors.textSecondary, marginTop: 20}}>暂无记录</Text>
+                            ) : (
+                                categoryTransactions.map(t => (
+                                    <View key={t.id} style={styles.detailItem}>
+                                        <View style={styles.detailItemLeft}>
+                                            <View style={styles.detailItemInfo}>
+                                                <Text style={styles.detailItemName}>{t.description || selectedCategoryItem?.label}</Text>
+                                                <Text style={styles.detailItemCount}>{new Date(t.transactionDateTime).toLocaleDateString()}</Text>
+                                            </View>
+                                        </View>
+                                        <View style={styles.detailItemRight}>
+                                            <Text style={styles.detailItemAmount}>
+                                                {formatCurrency(t.amount)}
+                                            </Text>
+                                        </View>
+                                    </View>
+                                ))
+                            )}
+                        </ScrollView>
+                    </Pressable>
+                </Pressable>
+            </Modal>
+        );
+    };
+
     const renderPointDetailModal = () => {
         // 如果是横屏模式，不渲染这个 Modal，而是由横屏视图自己处理
         if (isLandscape) return null;
@@ -818,6 +938,7 @@ export const ReportScreen: React.FC = () => {
             )}
             
             {renderPointDetailModal()}
+            {renderCategoryDetailModal()}
         </View>
     );
 };
@@ -1048,6 +1169,85 @@ const styles = StyleSheet.create({
     },
     modalValue: {
         fontSize: FontSizes.lg,
+        fontWeight: FontWeights.bold,
+        color: Colors.text,
+    },
+    // ===== 详情弹窗样式 =====
+    detailSheet: {
+        width: '100%',
+        height: '70%',
+        backgroundColor: Colors.surface,
+        borderTopLeftRadius: BorderRadius.xl,
+        borderTopRightRadius: BorderRadius.xl,
+        marginTop: 'auto',
+        ...Shadows.lg,
+    },
+    sheetHandle: {
+        width: 40,
+        height: 4,
+        backgroundColor: Colors.border,
+        borderRadius: 2,
+        alignSelf: 'center',
+        marginTop: Spacing.sm,
+        marginBottom: Spacing.xs,
+    },
+    sheetHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: Spacing.lg,
+        paddingVertical: Spacing.md,
+        borderBottomWidth: 1,
+        borderBottomColor: Colors.divider,
+    },
+    sheetTitle: {
+        fontSize: FontSizes.lg,
+        fontWeight: FontWeights.bold,
+        color: Colors.text,
+    },
+    sheetCloseButton: {
+        padding: Spacing.xs,
+    },
+    sheetCloseButtonText: {
+        fontSize: FontSizes.lg,
+        color: Colors.textSecondary,
+    },
+    detailContent: {
+        flex: 1,
+        padding: Spacing.lg,
+    },
+    detailItem: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: Spacing.md,
+        borderBottomWidth: 1,
+        borderBottomColor: Colors.background,
+    },
+    detailItemLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flex: 1,
+    },
+    detailItemInfo: {
+        marginLeft: Spacing.sm,
+        flex: 1,
+    },
+    detailItemName: {
+        fontSize: FontSizes.md,
+        color: Colors.text,
+        fontWeight: FontWeights.medium,
+    },
+    detailItemCount: {
+        fontSize: FontSizes.xs,
+        color: Colors.textSecondary,
+        marginTop: 2,
+    },
+    detailItemRight: {
+        alignItems: 'flex-end',
+    },
+    detailItemAmount: {
+        fontSize: FontSizes.md,
         fontWeight: FontWeights.bold,
         color: Colors.text,
     },

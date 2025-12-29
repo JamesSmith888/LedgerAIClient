@@ -4,17 +4,16 @@
  */
 import React, { useState, useEffect } from 'react';
 import {
-  ScrollView,
   StyleSheet,
   Text,
   View,
   TouchableOpacity,
   TextInput,
   Alert,
-  KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/Ionicons';
@@ -173,10 +172,7 @@ export const BudgetSettingScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.container} edges={['bottom']}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.flex}
-      >
+      <View style={styles.flex}>
         {/* 顶部栏 */}
         <View style={styles.header}>
           <TouchableOpacity onPress={() => navigation.goBack()}>
@@ -186,10 +182,11 @@ export const BudgetSettingScreen: React.FC = () => {
           <View style={{ width: 24 }} />
         </View>
 
-        <ScrollView
+        <KeyboardAwareScrollView
           style={styles.content}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.scrollContent}
+          bottomOffset={20}
         >
           {/* 当前预算信息 */}
           {currentBudget && (
@@ -304,7 +301,7 @@ export const BudgetSettingScreen: React.FC = () => {
               可以只设置月度总预算，分类预算是可选的。设置后可随时修改。
             </Text>
           </View>
-        </ScrollView>
+        </KeyboardAwareScrollView>
 
         {/* 保存按钮 */}
         <View style={styles.footer}>
@@ -320,7 +317,7 @@ export const BudgetSettingScreen: React.FC = () => {
             )}
           </TouchableOpacity>
         </View>
-      </KeyboardAvoidingView>
+      </View>
     </SafeAreaView>
   );
 };

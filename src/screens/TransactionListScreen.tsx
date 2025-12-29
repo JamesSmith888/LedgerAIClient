@@ -2,7 +2,7 @@
  * 记账列表页
  * 展示所有记账记录，支持按类型筛选
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -22,6 +22,7 @@ import {
     PanResponder,
     Animated,
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { toast } from '../utils/toast';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
@@ -266,6 +267,13 @@ export const TransactionListScreen: React.FC<TransactionListScreenProps> = ({ ro
     // ========== 聚合交易展开状态 ==========
     const [expandedTransactions, setExpandedTransactions] = useState<Map<number, Transaction[]>>(new Map());
     const [loadingExpanded, setLoadingExpanded] = useState<Set<number>>(new Set());
+    // 使用 Ref 追踪展开的 ID，以便在 useFocusEffect 中访问最新状态而不触发重渲染
+    const expandedIdsRef = useRef<Set<number>>(new Set());
+
+    // 同步 expandedTransactions 到 ref
+    useEffect(() => {
+        expandedIdsRef.current = new Set(expandedTransactions.keys());
+    }, [expandedTransactions]);
 
     // ========== 追加交易相关状态 ==========
     const [appendModalVisible, setAppendModalVisible] = useState<boolean>(false);
@@ -388,6 +396,22 @@ export const TransactionListScreen: React.FC<TransactionListScreenProps> = ({ ro
                 appendingTransaction.description
             );
             
+            // 如果父交易已展开，刷新子交易列表
+            if (expandedTransactions.has(appendingTransaction.id)) {
+                try {
+                    const aggregated = await transactionAPI.getAggregatedTransaction(appendingTransaction.id);
+                    if (aggregated.children && aggregated.children.length > 0) {
+                        setExpandedTransactions(prev => {
+                            const next = new Map(prev);
+                            next.set(appendingTransaction.id, aggregated.children!);
+                            return next;
+                        });
+                    }
+                } catch (err) {
+                    console.error('刷新子交易列表失败:', err);
+                }
+            }
+
             setAppendModalVisible(false);
             setAppendingTransaction(null);
             setAppendAmount('');
@@ -415,6 +439,28 @@ export const TransactionListScreen: React.FC<TransactionListScreenProps> = ({ ro
         try {
             await transactionAPI.delete(deletingTransaction.id);
             toast.success('删除成功');
+
+            // 如果是子交易，需要更新展开状态
+            if (deletingTransaction.parentId) {
+                setExpandedTransactions(prev => {
+                    const next = new Map(prev);
+                    const parentId = deletingTransaction.parentId!;
+                    const children = next.get(parentId);
+                    
+                    if (children) {
+                        // 从子交易列表中移除
+                        const newChildren = children.filter(c => c.id !== deletingTransaction.id);
+                        if (newChildren.length > 0) {
+                            next.set(parentId, newChildren);
+                        } else {
+                            // 如果没有子交易了，移除展开状态
+                            next.delete(parentId);
+                        }
+                    }
+                    return next;
+                });
+            }
+
             setDeleteModalVisible(false);
             setDeletingTransaction(null);
             // 刷新列表
@@ -469,6 +515,26 @@ export const TransactionListScreen: React.FC<TransactionListScreenProps> = ({ ro
         useCallback(() => {
             // ✨ 页面聚焦时并行加载所有数据（互不等待）
             loadTransactions();
+            
+            // 刷新已展开的子交易列表
+            const expandedIds = Array.from(expandedIdsRef.current);
+            if (expandedIds.length > 0) {
+                expandedIds.forEach(async (id) => {
+                    try {
+                        const aggregated = await transactionAPI.getAggregatedTransaction(id);
+                        if (aggregated.children && aggregated.children.length > 0) {
+                            setExpandedTransactions(prev => {
+                                const next = new Map(prev);
+                                next.set(id, aggregated.children!);
+                                return next;
+                            });
+                        }
+                    } catch (error) {
+                        console.error('刷新子交易失败:', id, error);
+                    }
+                });
+            }
+
             // 仅在非搜索模式下加载统计数据
             if (!searchKeyword) {
                 loadMonthlyStatistics();
@@ -561,7 +627,12 @@ export const TransactionListScreen: React.FC<TransactionListScreenProps> = ({ ro
             console.log('获取到的交易记录:', response);
 
             if (isLoadMore) {
-                setTransactions(prev => [...prev, ...response.content]);
+                // 追加数据时去重，避免分页加载时因数据变化导致重复 key
+                setTransactions(prev => {
+                    const existingIds = new Set(prev.map(t => t.id));
+                    const newItems = response.content.filter(t => !existingIds.has(t.id));
+                    return [...prev, ...newItems];
+                });
             } else {
                 setTransactions(response.content);
             }
@@ -1143,7 +1214,7 @@ export const TransactionListScreen: React.FC<TransactionListScreenProps> = ({ ro
         );
     };
 
-    const renderTransactionItem = ({ item }: { item: Transaction }) => {
+    const renderTransactionItem = ({ item, isInnerParent = false }: { item: Transaction, isInnerParent?: boolean }) => {
         // 根据 categoryId 获取完整的 category 对象
         const category = getCategoryById(item.categoryId);
         // 如果找不到对应的分类，则使用默认值
@@ -1164,16 +1235,76 @@ export const TransactionListScreen: React.FC<TransactionListScreenProps> = ({ ro
 
         // 是否有子交易
         const hasChildren = (item.childCount || 0) > 0;
-        // 显示金额：如果有聚合金额，优先显示聚合金额
-        const displayAmount = item.aggregatedAmount || item.amount;
-
-        // 展开状态
-        const isExpanded = expandedTransactions.has(item.id);
+        
+        // 展开状态 (Inner Parent never expanded in this context)
+        const isExpanded = !isInnerParent && expandedTransactions.has(item.id);
         const isLoadingChildren = loadingExpanded.has(item.id);
         const children = expandedTransactions.get(item.id) || [];
+        
+        // 是否是子交易 (Visual check: real child OR inner parent)
+        const isChild = item.parentId != null;
+        const isVisualChild = isChild || isInnerParent;
+
+        // 显示金额 logic
+        // If Inner Parent: Show Self Amount
+        // If Expanded Header: Show Aggregated Amount
+        // If Collapsed Parent: Show Aggregated Amount (default behavior)
+        // If Child: Show Self Amount
+        const displayAmount = isInnerParent ? item.amount : (item.aggregatedAmount || item.amount);
+
+        // If Expanded Header, we render a special container structure
+        if (isExpanded) {
+            return (
+                <View style={styles.expandedGroupContainer}>
+                    {/* Header: Acts as Collapse Button */}
+                    <Pressable
+                        onPress={() => handleItemPress(item)}
+                        style={styles.expandedParentHeader}
+                    >
+                        <View style={styles.expandedParentHeaderLeft}>
+                            <View style={[styles.iconContainer, { backgroundColor: category.color + '20' }]}>
+                                <CategoryIcon icon={category.icon} size={24} color={category.color} />
+                            </View>
+                            <View style={styles.infoContainer}>
+                                <Text style={styles.categoryName}>{item.description || category.name} (汇总)</Text>
+                                <Text style={styles.metaText}>{formatDate(item.transactionDateTime)} · 共 {(item.childCount || 0) + 1} 笔</Text>
+                            </View>
+                        </View>
+                        <View style={styles.expandedParentHeaderRight}>
+                            <Text style={[
+                                styles.amount,
+                                item.type === 'EXPENSE' ? styles.amountExpense : styles.amountIncome
+                            ]}>
+                                {item.type === 'EXPENSE' ? '-' : '+'}¥{displayAmount.toFixed(2)}
+                            </Text>
+                            <Icon name="chevron-up" size={16} color={Colors.textSecondary} style={{ marginLeft: 8 }} />
+                        </View>
+                    </Pressable>
+
+                    {/* Children Container */}
+                    <View style={styles.childrenContainer}>
+                        {/* 连接线 */}
+                        <View style={styles.childrenConnectorLine} />
+                        
+                        {/* 1. The Parent Record (Self) - Rendered as an Inner Item */}
+                        {renderTransactionItem({ item: item, isInnerParent: true })}
+
+                        {/* 2. The Actual Children */}
+                        {isLoadingChildren ? (
+                            <ActivityIndicator size="small" color={Colors.primary} style={{ padding: 10 }} />
+                        ) : (
+                            children.map((child) => (
+                                <React.Fragment key={child.id}>
+                                    {renderTransactionItem({ item: child })}
+                                </React.Fragment>
+                            ))
+                        )}
+                    </View>
+                </View>
+            );
+        }
 
         return (
-            <>
             <Swipeable
                 ref={(ref) => {
                     if (ref) {
@@ -1186,7 +1317,15 @@ export const TransactionListScreen: React.FC<TransactionListScreenProps> = ({ ro
                 overshootRight={false}
             >
                 <Pressable
-                    onPress={() => handleItemPress(item)}
+                    onPress={() => {
+                        if (isInnerParent) {
+                            // Inner Parent: Always Edit
+                            navigation.navigate('AddTransaction', { transaction: item });
+                        } else {
+                            // Normal behavior
+                            handleItemPress(item);
+                        }
+                    }}
                     onLongPress={() => handleLongPress(item)}
                     delayLongPress={250}
                     style={({ pressed }) => [
@@ -1194,7 +1333,10 @@ export const TransactionListScreen: React.FC<TransactionListScreenProps> = ({ ro
                         pressed && styles.transactionCardPressed
                     ]}
                 >
-                    <Card variant="flat" style={styles.transactionCard}>
+                    <Card variant="flat" style={[
+                        styles.transactionCard,
+                        isVisualChild ? styles.childTransactionCard : undefined
+                    ]}>
                         <View style={styles.transactionRow}>
                             {/* 左侧：图标和信息 */}
                             <View style={styles.leftSection}>
@@ -1202,14 +1344,23 @@ export const TransactionListScreen: React.FC<TransactionListScreenProps> = ({ ro
                                     style={[
                                         styles.iconContainer,
                                         { backgroundColor: category.color + '20' },
+                                        isVisualChild ? styles.childIconContainer : undefined
                                     ]}
                                 >
-                                    <CategoryIcon icon={category.icon} size={24} color={category.color} />
+                                    <CategoryIcon icon={category.icon} size={isVisualChild ? 20 : 24} color={category.color} />
                                     {/* 聚合交易标识 */}
-                                    {hasChildren && (
+                                    {hasChildren && !isInnerParent && (
                                         <View style={styles.aggregatedBadge}>
                                             <Text style={styles.aggregatedBadgeText}>
                                                 {(item.childCount || 0) + 1}
+                                            </Text>
+                                        </View>
+                                    )}
+                                    {/* Inner Parent Indicator */}
+                                    {isInnerParent && (
+                                        <View style={[styles.aggregatedBadge, { backgroundColor: Colors.primary }]}>
+                                            <Text style={[styles.aggregatedBadgeText, { color: 'white', fontSize: 8 }]}>
+                                                主
                                             </Text>
                                         </View>
                                     )}
@@ -1217,7 +1368,7 @@ export const TransactionListScreen: React.FC<TransactionListScreenProps> = ({ ro
                                 <View style={styles.infoContainer}>
                                     {/* 第一行：主标题（固定高度） */}
                                     <View style={styles.titleRow}>
-                                        <Text style={styles.categoryName} numberOfLines={1}>
+                                        <Text style={[styles.categoryName, isVisualChild ? styles.childCategoryName : undefined]} numberOfLines={1}>
                                             {item.description || category.name}
                                         </Text>
                                         {/* AI 来源标识 - 在标题旁边显示小图标 */}
@@ -1283,17 +1434,36 @@ export const TransactionListScreen: React.FC<TransactionListScreenProps> = ({ ro
                                         item.type === 'EXPENSE'
                                             ? styles.amountExpense
                                             : styles.amountIncome,
+                                        isVisualChild ? styles.childAmount : undefined
                                     ]}
                                 >
                                     {item.type === 'EXPENSE' ? '-' : '+'}¥{displayAmount.toFixed(2)}
                                 </Text>
-                                {hasChildren && (
-                                    <Icon 
-                                        name={isExpanded ? "chevron-up" : "chevron-down"} 
-                                        size={16} 
-                                        color={Colors.textSecondary} 
-                                        style={{ marginTop: 4, alignSelf: 'flex-end' }}
-                                    />
+                                {hasChildren && !isInnerParent && (
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginTop: 4 }}>
+                                        {/* 父交易编辑按钮 */}
+                                        <TouchableOpacity 
+                                            style={styles.parentEditButton}
+                                            onPress={(e) => {
+                                                e.stopPropagation();
+                                                // 正常编辑流程
+                                                const parent = navigation.getParent();
+                                                if (parent) {
+                                                    parent.navigate('AddTransaction', { transaction: item });
+                                                }
+                                            }}
+                                            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                                        >
+                                            <Icon name="create-outline" size={16} color={Colors.primary} />
+                                        </TouchableOpacity>
+                                        
+                                        <Icon 
+                                            name={isExpanded ? "chevron-up" : "chevron-down"} 
+                                            size={16} 
+                                            color={Colors.textSecondary} 
+                                            style={{ marginLeft: 8 }}
+                                        />
+                                    </View>
                                 )}
                             </View>
                         </View>
@@ -1301,18 +1471,6 @@ export const TransactionListScreen: React.FC<TransactionListScreenProps> = ({ ro
                     </Card>
                 </Pressable>
             </Swipeable>
-            
-            {/* 展开的子交易列表 - 渲染为完整的交易项 */}
-            {isExpanded && (
-                <View style={styles.childrenContainer}>
-                    {isLoadingChildren ? (
-                        <ActivityIndicator size="small" color={Colors.primary} style={{ padding: 10 }} />
-                    ) : (
-                        children.map((child) => renderTransactionItem({ item: child }))
-                    )}
-                </View>
-            )}
-        </>
         );
     };
 
@@ -2211,9 +2369,9 @@ export const TransactionListScreen: React.FC<TransactionListScreenProps> = ({ ro
                     style={styles.deleteModalOverlay}
                     onPress={() => setAppendModalVisible(false)}
                 >
-                    <KeyboardAvoidingView
-                        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                        style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}
+                    <KeyboardAwareScrollView
+                        contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center' }}
+                        keyboardShouldPersistTaps="handled"
                     >
                         <TouchableOpacity activeOpacity={1} onPress={() => {}} style={{ width: '95%', maxWidth: 450 }}>
                             <View style={[styles.deleteModalContainer, { width: '100%' }]}>
@@ -2234,8 +2392,7 @@ export const TransactionListScreen: React.FC<TransactionListScreenProps> = ({ ro
                                         onPress={() => setShowParentSelector(!showParentSelector)}
                                     >
                                         <Text style={styles.parentSelectorButtonText} numberOfLines={1}>
-                                            {appendingTransaction?.description || appendingTransaction?.categoryId ? 
-                                                getCategoryById(appendingTransaction.categoryId)?.name : '选择交易'}
+                                            选择交易
                                         </Text>
                                         <Icon 
                                             name={showParentSelector ? "chevron-up" : "chevron-down"} 
@@ -2265,10 +2422,7 @@ export const TransactionListScreen: React.FC<TransactionListScreenProps> = ({ ro
                                                     .map(option => (
                                                         <TouchableOpacity
                                                             key={option.id}
-                                                            style={[
-                                                                styles.parentOption,
-                                                                option.id === appendingTransaction?.id && styles.parentOptionSelected
-                                                            ]}
+                                                            style={styles.parentOption}
                                                             onPress={() => {
                                                                 setAppendingTransaction(option);
                                                                 setShowParentSelector(false);
@@ -2354,7 +2508,7 @@ export const TransactionListScreen: React.FC<TransactionListScreenProps> = ({ ro
                             </View>
                         </View>
                     </TouchableOpacity>
-                    </KeyboardAvoidingView>
+                    </KeyboardAwareScrollView>
                 </Pressable>
             </Modal>
 
@@ -3950,5 +4104,68 @@ const styles = StyleSheet.create({
     childrenContainer: {
         marginTop: Spacing.xs,
         paddingLeft: Spacing.md,
+        position: 'relative',
+    },
+    childrenConnectorLine: {
+        position: 'absolute',
+        left: 24,
+        top: -10,
+        bottom: 10,
+        width: 2,
+        backgroundColor: Colors.border,
+        zIndex: -1,
+        opacity: 0.5,
+    },
+    childTransactionCard: {
+        backgroundColor: Colors.background + '80', // 半透明背景
+        borderLeftWidth: 3,
+        borderLeftColor: Colors.primary + '50',
+        marginLeft: Spacing.xs,
+        paddingVertical: Spacing.sm,
+        minHeight: 60,
+        elevation: 0, // Remove shadow for children
+        shadowOpacity: 0,
+    },
+    childIconContainer: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+    },
+    childCategoryName: {
+        fontSize: FontSizes.sm,
+    },
+    childAmount: {
+        fontSize: FontSizes.md,
+    },
+    parentEditButton: {
+        padding: 4,
+        marginRight: 4,
+    },
+
+    // ========== 展开的父交易组样式 ==========
+    expandedGroupContainer: {
+        marginBottom: Spacing.sm,
+        backgroundColor: Colors.surface,
+        borderRadius: BorderRadius.lg,
+        overflow: 'hidden',
+        ...Shadows.sm,
+    },
+    expandedParentHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: Spacing.md,
+        backgroundColor: Colors.surface,
+        borderBottomWidth: 1,
+        borderBottomColor: Colors.border,
+    },
+    expandedParentHeaderLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flex: 1,
+    },
+    expandedParentHeaderRight: {
+        flexDirection: 'row',
+        alignItems: 'center',
     },
 });

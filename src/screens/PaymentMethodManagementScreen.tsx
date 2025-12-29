@@ -14,10 +14,10 @@ import {
   Modal,
   TextInput,
   Pressable,
-  KeyboardAvoidingView,
   Platform,
   Keyboard,
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { Colors, Spacing, FontSizes, BorderRadius, Shadows, FontWeights } from '../constants/theme';
@@ -261,8 +261,7 @@ export const PaymentMethodManagementScreen: React.FC = () => {
           setShowEditModal(false);
         }}
       >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        <View
           style={[styles.fullScreenContainer, { paddingTop: insets.top }]}
         >
           {/* 页面头部 */}
@@ -280,10 +279,11 @@ export const PaymentMethodManagementScreen: React.FC = () => {
           </View>
 
           {/* 表单内容 */}
-          <ScrollView
+          <KeyboardAwareScrollView
             style={styles.editScrollView}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.editScrollViewContent}
+            bottomOffset={20}
           >
             {/* 名称输入 */}
             <View style={styles.formGroup}>
@@ -325,7 +325,7 @@ export const PaymentMethodManagementScreen: React.FC = () => {
                 ))}
               </View>
             </View>
-          </ScrollView>
+          </KeyboardAwareScrollView>
 
           {/* 底部按钮 */}
           <View style={[styles.editFooter, { paddingBottom: insets.bottom + Spacing.md }]}>
@@ -349,7 +349,7 @@ export const PaymentMethodManagementScreen: React.FC = () => {
               )}
             </TouchableOpacity>
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </Modal>
 
       {/* 全局加载指示器 */}

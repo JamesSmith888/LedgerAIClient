@@ -19,6 +19,7 @@ import {
   Pressable,
   FlatList,
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { Colors, Spacing, FontSizes, BorderRadius, Shadows, FontWeights } from '../constants/theme';
@@ -1269,10 +1270,11 @@ export const APIKeySettingsScreen: React.FC = () => {
         <View style={styles.placeholder} />
       </View>
 
-      <ScrollView
+      <KeyboardAwareScrollView
         style={styles.scrollView}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
+        bottomOffset={20}
       >
         {/* 说明区域 */}
         <View style={styles.infoSection}>
@@ -1444,7 +1446,7 @@ export const APIKeySettingsScreen: React.FC = () => {
             API Key 仅存储在您的设备本地，不会上传到服务器
           </Text>
         </View>
-      </ScrollView>
+      </KeyboardAwareScrollView>
     </View>
   );
 };
